@@ -105,7 +105,8 @@ app.post('/telegram', async (req, res) => {
           chatId,
           `${vpn.ok ? '✅' : '⚠️'} Browser VPN status\n` +
           `IP: ${vpn.ip}\nCountry: ${vpn.country}\nCity: ${vpn.city}\nProvider: ${vpn.org || 'unknown'}\n` +
-          `India: ${vpn.ok ? 'YES' : 'NO'}`
+          `India: ${vpn.ok ? 'YES' : 'NO'}\n` +
+          `Checks: ${(vpn.checks || []).map(x => x.country ? `${x.provider}=${x.country}` : `${x.provider}=ERR`).join(', ') || 'n/a'}`
         );
         lastStatus = 'idle';
       } catch (error) {
@@ -157,7 +158,9 @@ app.post('/telegram', async (req, res) => {
         const vpn = await withBrowser(context => connectIndia(context));
         await sendMenu(
           chatId,
-          `✅ Surfshark connected to India\nIP: ${vpn.ip}\nCountry: ${vpn.country}\nCity: ${vpn.city}`
+          `✅ Surfshark connected to India\n` +
+          `Endpoint: ${vpn.endpoint || 'India'}\nIP: ${vpn.ip}\nCountry: ${vpn.country}\nCity: ${vpn.city}\n` +
+          `Checks: ${(vpn.checks || []).map(x => x.country ? `${x.provider}=${x.country}` : `${x.provider}=ERR`).join(', ')}`
         );
         lastStatus = 'Surfshark India connected';
       } catch (error) {

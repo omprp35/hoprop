@@ -262,136 +262,195 @@ async function openLocationChooser(page) {
   return chooserIsOpen(page);
 }
 
+async function bodyText(page) {
+  return await page.locator('body').innerText().catch(() => '');
+}
+
+async function isConnected(page) {
+  const text = await bodyText(page);
+  return /connected\s+and\s+safe/i.test(text) || /vpn\s+ip\s+address/i.test(text) && /\bpause\b/i.test(text);
+}
+
+async function forceDisconnect(page) {
+  if (!(await isConnected(page))) return true;
+
+  // Surfshark 5.2.x: the power/disconnect icon is the small button immediately
+  // to the right of the Pause button. Find it geometrically so we do not depend
+  // on an aria-label that Surfshark may change.
+  const pause = page.getByRole('button', { name: /^pause$/i }).first();
+  const pauseBox = await pause.boundingBox().catch(() => null);
+
+  if (pauseBox) {
+    const buttons = page.locator('button');
+    const count = await buttons.count().catch(() => 0);
+    const candidates = [];
+    const pauseCenterY = pauseBox.y + pauseBox.height / 2;
+
+    for (let i = 0; i < Math.min(count, 120); i += 1) {
+      const button = buttons.nth(i);
+      if (!(await button.isVisible().catch(() => false))) continue;
+      const box = await button.boundingBox().catch(() => null);
+      if (!box) continue;
+      const centerY = box.y + box.height / 2;
+      const text = ((await button.innerText().catch(() => '')) || '').trim();
+      if (Math.abs(centerY - pauseCenterY) > 35) continue;
+      if (box.x <= pauseBox.x + pauseBox.width - 4) continue;
+      if (box.x - (pauseBox.x + pauseBox.width) > 140) continue;
+      if (/pause|connect|turn on/i.test(text)) continue;
+      candidates.push({ button, box, distance: box.x - (pauseBox.x + pauseBox.width) });
+    }
+
+    candidates.sort((a, b) => a.distance - b.distance);
+    if (candidates.length) {
+      await candidates[0].button.click({ force: true, timeout: 3000 }).catch(() => {});
+    } else {
+      // Exact layout fallback: click the center of the square power control.
+      await page.mouse.click(
+        pauseBox.x + pauseBox.width + 35,
+        pauseBox.y + pauseBox.height / 2
+      ).catch(() => {});
+    }
+  }
+
+  for (let i = 0; i < 20; i += 1) {
+    await sleep(500);
+    const text = await bodyText(page);
+    if (!/connected\s+and\s+safe/i.test(text) && !/\bpause\b/i.test(text)) return true;
+    const connect = page.getByRole('button', { name: /^connect$/i }).first();
+    if (await connect.isVisible().catch(() => false)) return true;
+  }
+
+  return false;
+}
+
+async function clickLocationResult(page, label) {
+  // Search results use nested React nodes, so click the visible exact text node.
+  const nodes = page.locator(`xpath=//*[normalize-space(text())="${label}"]`);
+  const count = await nodes.count().catch(() => 0);
+  for (let i = 0; i < Math.min(count, 40); i += 1) {
+    const node = nodes.nth(i);
+    if (!(await node.isVisible().catch(() => false))) continue;
+    const box = await node.boundingBox().catch(() => null);
+    if (!box) continue;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+    await sleep(900);
+    return true;
+  }
+  return false;
+}
+
+async function selectIndiaEndpoint(page, endpoint) {
+  const opened = await openLocationChooser(page);
+  if (!opened) return { ok: false, reason: 'location chooser did not open' };
+
+  const search = page.locator('input[placeholder*="Search" i], input[aria-label*="Search" i], input').first();
+  if (!(await search.isVisible().catch(() => false))) {
+    return { ok: false, reason: 'location search box not found' };
+  }
+
+  await search.fill('india');
+  await sleep(900);
+
+  const clicked = await clickLocationResult(page, endpoint);
+  if (!clicked) {
+    return { ok: false, reason: `${endpoint} result not found`, text: await bodyText(page) };
+  }
+
+  // Wait for chooser to close / dashboard to return.
+  for (let i = 0; i < 16; i += 1) {
+    await sleep(500);
+    if (!(await chooserIsOpen(page))) break;
+  }
+
+  return { ok: true };
+}
+
+function formatChecks(vpn) {
+  if (!vpn?.checks) return '';
+  return vpn.checks
+    .map(x => x.country ? `${x.provider}=${x.country}/${x.ip}` : `${x.provider}=ERR`)
+    .join(', ');
+}
+
+async function verifyIndia(context, tries = 3) {
+  let vpn = null;
+  for (let i = 0; i < tries; i += 1) {
+    await sleep(1800);
+    vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
+    if (vpn?.ok) return vpn;
+  }
+  return vpn;
+}
+
 async function connectIndia(context) {
   const { page } = await openSurfsharkPopup(context);
   await sleep(900);
 
-  // If browser traffic already exits through India, keep the current connection.
+  // If already verified as India, do not disturb a good tunnel.
   let vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
   if (vpn?.ok) return vpn;
 
-  const body = await page.locator('body').innerText().catch(() => '');
-  if (/log\s*in|sign\s*in/i.test(body) && !/connected\s+and\s+safe|pause|vpn\s+ip\s+address/i.test(body)) {
+  const initialBody = await bodyText(page);
+  if (/log\s*in|sign\s*in/i.test(initialBody) && !/connected\s+and\s+safe|pause|vpn\s+ip\s+address/i.test(initialBody)) {
     throw new Error('Surfshark is not logged in. Use the Surfshark Login button first.');
   }
 
-  const openedChooser = await openLocationChooser(page);
-  if (!openedChooser) {
-    const text = await page.locator('body').innerText().catch(() => '');
-    throw new Error(`Could not open Surfshark location chooser. Popup text: ${text.slice(0, 900)}`);
-  }
+  // IMPORTANT: selecting an India card while an old tunnel is still connected can
+  // leave Surfshark showing "India / Mumbai" while traffic continues through the
+  // previous GB/SG endpoint. Always start each endpoint attempt from DISCONNECTED.
+  const endpoints = ['Mumbai', 'Delhi', 'India'];
+  const attempts = [];
 
-  // Search for India.
-  const search = page.locator('input[placeholder*="Search" i], input[aria-label*="Search" i], input').first();
-  if (!(await search.isVisible().catch(() => false))) {
-    throw new Error('Surfshark location search box was not found.');
-  }
-
-  await search.fill('india');
-  await sleep(1000);
-
-  // Surfshark 5.2.x currently shows:
-  //   India   / Fastest
-  //   Mumbai  / India – Virtual Location
-  //   Delhi   / India – Virtual Location
-  //
-  // Prefer Mumbai because it is an unambiguous India endpoint. This avoids
-  // accidentally selecting a generic "Fastest" action and ending up in GB/SG.
-  async function clickVisibleExactText(label) {
-    const nodes = page.locator(`xpath=//*[normalize-space(text())="${label}"]`);
-    const count = await nodes.count().catch(() => 0);
-    for (let i = 0; i < Math.min(count, 30); i += 1) {
-      const node = nodes.nth(i);
-      if (!(await node.isVisible().catch(() => false))) continue;
-      const box = await node.boundingBox().catch(() => null);
-      if (!box) continue;
-
-      // Click the text itself first. Surfshark's React rows handle bubbled clicks.
-      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
-      await sleep(1200);
-      return true;
+  for (const endpoint of endpoints) {
+    const disconnected = await forceDisconnect(page);
+    if (!disconnected) {
+      throw new Error('Could not cleanly disconnect the previous Surfshark tunnel. The bot stopped instead of risking the wrong country.');
     }
-    return false;
-  }
 
-  let selected = false;
-  for (const location of ['Mumbai', 'Delhi']) {
-    if (await clickVisibleExactText(location)) {
-      selected = true;
-      break;
-    }
-  }
-
-  // Fallback to the country-level India row only if city rows are unavailable.
-  if (!selected) {
-    selected = await clickVisibleExactText('India');
-  }
-
-  if (!selected) {
-    const text = await page.locator('body').innerText().catch(() => '');
-    throw new Error(`No India/Mumbai/Delhi result could be clicked. Popup text: ${text.slice(0, 1000)}`);
-  }
-
-  // Wait for the chooser to close and the dashboard to reflect an India target.
-  // Do NOT click a generic Connect button until this is true; otherwise Surfshark
-  // may connect to its unrelated "Fastest location" (the previous GB bug).
-  let indiaSelectedInUi = false;
-  let dashboardText = '';
-
-  for (let i = 0; i < 18; i += 1) {
     await sleep(700);
-    dashboardText = await page.locator('body').innerText().catch(() => '');
-
-    const chooserStillOpen = /choose location/i.test(dashboardText) && /locations/i.test(dashboardText);
-    const indiaCard = /\bIndia\b/i.test(dashboardText) && /Mumbai|Delhi|Virtual Location|Fastest/i.test(dashboardText);
-
-    if (!chooserStillOpen && indiaCard) {
-      indiaSelectedInUi = true;
-      break;
+    const selected = await selectIndiaEndpoint(page, endpoint);
+    if (!selected.ok) {
+      attempts.push(`${endpoint}: ${selected.reason}`);
+      continue;
     }
-  }
 
-  if (!indiaSelectedInUi) {
-    throw new Error(
-      `Surfshark did not confirm India as the selected location, so Connect was not pressed. Popup text: ${dashboardText.slice(0, 1000)}`
-    );
-  }
+    // Some Surfshark builds connect immediately when a location row is clicked.
+    // If not, only now press the dashboard Connect button.
+    let connected = await isConnected(page);
+    if (!connected) {
+      const connectButton = page.getByRole('button', { name: /^connect$/i }).first();
+      if (await connectButton.isVisible().catch(() => false)) {
+        await connectButton.click({ force: true, timeout: 4000 }).catch(() => {});
+      }
 
-  // Often selecting Mumbai connects immediately. First give it time and verify
-  // the real browser egress IP.
-  for (let i = 0; i < 12; i += 1) {
-    await sleep(1500);
-    vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
-    if (vpn?.ok) return vpn;
-  }
-
-  // If the dashboard is explicitly set to India but still disconnected, then
-  // (and only then) press Connect.
-  dashboardText = await page.locator('body').innerText().catch(() => '');
-  const selectedIndia = /\bIndia\b/i.test(dashboardText) && /Mumbai|Delhi|Virtual Location|Fastest/i.test(dashboardText);
-  const connected = /connected\s+and\s+safe|\bpause\b/i.test(dashboardText);
-
-  if (selectedIndia && !connected) {
-    const connectButton = page.getByRole('button', { name: /^connect$/i }).first();
-    if (await connectButton.isVisible().catch(() => false)) {
-      await connectButton.click({ force: true }).catch(() => {});
+      for (let i = 0; i < 24; i += 1) {
+        await sleep(500);
+        connected = await isConnected(page);
+        if (connected) break;
+      }
     }
+
+    if (!connected) {
+      attempts.push(`${endpoint}: did not enter Connected state`);
+      continue;
+    }
+
+    // Let the browser proxy settle, then verify with THREE independent services.
+    vpn = await verifyIndia(context, 2);
+    if (vpn?.ok) {
+      console.log(`Surfshark India verified via ${endpoint}: ${formatChecks(vpn)}`);
+      return { ...vpn, endpoint };
+    }
+
+    attempts.push(`${endpoint}: ${formatChecks(vpn) || 'IP verification failed'}`);
+    console.warn(`Surfshark ${endpoint} did not verify as India; rotating endpoint. ${formatChecks(vpn)}`);
   }
 
-  // Final real-IP verification.
-  for (let i = 0; i < 30; i += 1) {
-    await sleep(2000);
-    vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
-    if (vpn?.ok) return vpn;
-  }
-
-  dashboardText = await page.locator('body').innerText().catch(() => '');
-  if (!vpn) {
-    throw new Error(`India was selected, but the browser IP could not be checked. Surfshark UI: ${dashboardText.slice(0, 700)}`);
-  }
-
+  const finalUi = await bodyText(page);
   throw new Error(
-    `Surfshark selected India but browser traffic is still ${vpn.country} (${vpn.ip}, ${vpn.city}). Surfshark UI: ${dashboardText.slice(0, 700)}`
+    'Surfshark could not obtain an IP that geolocation services agree is India. ' +
+    `Tried Mumbai, Delhi, and India/Fastest automatically. ${attempts.join(' | ')}. ` +
+    `Surfshark UI: ${finalUi.slice(0, 500)}`
   );
 }
 
