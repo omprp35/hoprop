@@ -1,80 +1,72 @@
 const express = require('express');
-const fs = require('fs');
 const config = require('./config');
-const { sendMessage, sendMenu, sendSessionMenu, sendPhoto, setupWebhook } = require('./telegram');
-const { runAutomation, launchBrowser } = require('./automation');
-const { checkPublicIp } = require('./vpn-check');
-const { requestLoginCode, waitForLogin, connectIndia } = require('./surfshark');
-const { ManualSession } = require('./manual-session');
+const { BrowserSession } = require('./browser');
+const { sendMessage, sendMenu, setupWebhook } = require('./telegram');
+const { verifyIndia, claimAndApply, netflixStartAndSendLink, finishSignup, validateNetflixLink } = require('./signup');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 
-let running = false;
-let lastStatus = 'idle';
-let lastRunAt = null;
-const manualSession = new ManualSession();
+const browser = new BrowserSession();
+const flows = new Map();
+let workflowOwner = null;
 
 function isAuthorized(chatId) {
   return config.authorizedChatIds.size === 0 || config.authorizedChatIds.has(String(chatId));
 }
 
-async function withBrowser(task) {
-  const { context } = await launchBrowser();
-  try {
-    return await task(context);
-  } finally {
-    await context.close().catch(() => {});
-  }
+function desktopUrl() {
+  return `${config.publicUrl}/desktop/vnc.html?autoconnect=1&resize=scale&path=desktop/websockify`;
 }
 
-async function sendManualScreenshot(chatId, grid = false) {
-  const shot = await manualSession.screenshot(chatId, { grid });
-  try {
-    const caption = grid
-      ? '🧭 1280×900 coordinate grid. Use /click X Y, for example /click 640 450.'
-      : `📸 Manual browser\n${shot.title || '(no title)'}\n${shot.url || ''}`;
-    await sendPhoto(chatId, shot.filePath, caption);
-  } finally {
-    if (shot.filePath && fs.existsSync(shot.filePath)) fs.unlink(shot.filePath, () => {});
-  }
-}
-
-function manualHelpText() {
-  return (
-    '🖥 Manual browser session is active.\n\n' +
-    'Use the buttons below, or these commands:\n' +
-    '/open example.com - open a public website\n' +
-    '/click X Y - click the 1280×900 viewport\n' +
-    '/type TEXT - type into the currently focused field\n' +
-    '/key Enter - press Enter (also Tab, Escape, arrows, etc.)\n' +
-    '/session_screenshot - current browser screenshot\n' +
-    '/session_grid - screenshot with coordinate grid\n' +
-    '/session_close - close the hosted browser\n\n' +
-    'Tip: tap 🦈 Open Surfshark, then use the grid/screenshot to inspect or click it manually.\n' +
-    'Do not type passwords with /type because Telegram keeps message history.'
+async function sendDesktop(chatId, message = '🖥 Live browser desktop is ready.') {
+  if (!config.publicUrl) throw new Error('PUBLIC_URL is not configured.');
+  const username = process.env.DESKTOP_USERNAME || 'browser';
+  await sendMessage(
+    chatId,
+    `${message}\n\nUsername: ${username}\nPassword: your DESKTOP_PASSWORD Railway variable.\n\n` +
+      'This is the same persistent Chromium profile used by the signup workflow.',
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: '🌐 Open Live Desktop', url: desktopUrl() }]]
+      }
+    }
   );
 }
 
-app.get('/', async (req, res) => {
-  res.json({
-    ok: true,
-    service: 'telegram-browser-automation',
-    status: running ? 'running' : lastStatus,
-    manualSession: manualSession.active,
-    lastRunAt
-  });
-});
+function clearFlow(chatId) {
+  flows.delete(String(chatId));
+  if (String(workflowOwner) === String(chatId)) workflowOwner = null;
+}
+
+function getFlow(chatId) {
+  return flows.get(String(chatId));
+}
+
+function setFlow(chatId, value) {
+  flows.set(String(chatId), value);
+}
+
+function looksLikeEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+}
 
 app.get('/health', (req, res) => res.status(200).send('ok'));
 
+app.get('/', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'live-browser-netflix-signup',
+    browserActive: browser.active,
+    profileDir: config.profileDir,
+    workflowActive: Boolean(workflowOwner)
+  });
+});
+
 app.post('/telegram', async (req, res) => {
   const secret = req.get('x-telegram-bot-api-secret-token');
-  if (secret !== config.webhookSecret) {
-    return res.status(401).json({ ok: false });
-  }
+  if (secret !== config.webhookSecret) return res.status(401).json({ ok: false });
 
-  // Reply to Telegram immediately; commands continue in this Railway process.
   res.status(200).json({ ok: true });
 
   const message = req.body?.message;
@@ -82,328 +74,160 @@ app.post('/telegram', async (req, res) => {
   const rawText = message?.text?.trim();
   if (!chatId || !rawText) return;
 
-  const BUTTON_COMMANDS = {
+  const buttonCommands = {
+    '▶️ Start Signup': '/signup',
     '🖥 Live Desktop': '/desktop',
-    '🖥 Manual Session': '/session_start',
-    '🔐 Surfshark Login': '/surfshark_login',
-    '🇮🇳 Connect India': '/connect_india',
-    '🌍 VPN Status': '/surfshark_status',
-    '▶️ Run Automation': '/run',
-    '📊 Bot Status': '/status',
-    '🆔 My ID': '/id',
-    '🦈 Open Surfshark': '/session_surfshark',
-    '🌐 Open IP Check': '/session_ipcheck',
-    '📸 Screenshot': '/session_screenshot',
-    '🧭 Coordinate Grid': '/session_grid',
-    '⬆️ Scroll Up': '/session_scroll_up',
-    '⬇️ Scroll Down': '/session_scroll_down',
-    '🔄 Refresh': '/session_refresh',
-    '❌ Close Session': '/session_close',
-    '🏠 Main Menu': '/menu'
+    '🔄 Restart Browser': '/restart',
+    '❌ Close Browser': '/close',
+    '🛑 Cancel Signup': '/cancel'
   };
-  const text = BUTTON_COMMANDS[rawText] || rawText;
+  const text = buttonCommands[rawText] || rawText;
 
   try {
     if (!isAuthorized(chatId)) {
-      await sendMessage(chatId, `Not authorized. Your chat ID is: ${chatId}`);
+      await sendMessage(chatId, `Not authorized. Your Telegram chat ID is: ${chatId}`);
       return;
     }
 
     if (text === '/start' || text === '/help' || text === '/menu') {
       await sendMenu(
         chatId,
-        'Browser automation bot ready.\n\n' +
-        '🖥 Live Desktop gives you an RDP-like browser window through noVNC.\n' +
-        '🖥 Manual Session gives you the Telegram screenshot/click controls.\n\n' +
-        '/desktop - open RDP-like live desktop\n' +
-        '/session_start - start Telegram-controlled manual browser\n' +
-        '/surfshark_login - get Surfshark device login code\n' +
-        '/connect_india - automatic India attempt\n' +
-        '/surfshark_status - check browser IP/country\n' +
-        '/run - run automation\n' +
-        '/status - current bot status\n' +
-        '/id - show your Telegram chat ID'
+        'Browser signup bot\n\n' +
+          '▶️ Start Signup — verify India, ask for email, run extension + Netflix steps\n' +
+          '🖥 Live Desktop — manually inspect/control the same Chromium session\n' +
+          '🛑 Cancel Signup — forget the current email/link workflow\n\n' +
+          'Surfshark is never switched automatically. Connect it to India manually in Live Desktop and keep Auto-connect enabled.'
       );
       return;
     }
 
     if (text === '/id') {
-      await sendMenu(chatId, `Your chat ID: ${chatId}`);
+      await sendMenu(chatId, `Your Telegram chat ID: ${chatId}`);
       return;
     }
 
-    if (text === '/status') {
-      const sessionInfo = manualSession.active ? await manualSession.info() : null;
-      await sendMenu(
-        chatId,
-        `Status: ${running ? 'running' : lastStatus}` +
-        `${lastRunAt ? `\nLast run: ${lastRunAt}` : ''}` +
-        `${sessionInfo?.active ? `\nManual session: ACTIVE\nSession URL: ${sessionInfo.url || '(blank)'}` : '\nManual session: closed'}`
-      );
-      return;
-    }
-
-    // ---- RDP-like live desktop (noVNC) ----
     if (text === '/desktop') {
-      if (!config.publicUrl) {
-        await sendMenu(chatId, 'PUBLIC_URL is not configured, so I cannot create the live desktop link.');
+      const wasActive = browser.active;
+      if (!wasActive) {
+        await sendMessage(chatId, 'Starting Chromium…');
+        await browser.start();
+      }
+      await sendDesktop(chatId, wasActive ? '🖥 Desktop is already running.' : '🖥 Chromium started.');
+      return;
+    }
+
+    if (text === '/restart') {
+      if (workflowOwner) {
+        await sendMenu(chatId, 'A signup workflow is active. Cancel it first with 🛑 Cancel Signup before restarting Chromium.');
         return;
       }
-      if (running) {
-        await sendMessage(chatId, 'A browser job is already running. Wait for it to finish, then open the live desktop.');
+      await sendMessage(chatId, 'Restarting Chromium…');
+      await browser.restart();
+      await sendDesktop(chatId, '✅ Chromium restarted with the same saved profile.');
+      return;
+    }
+
+    if (text === '/close') {
+      if (workflowOwner) {
+        await sendMenu(chatId, 'A signup workflow is active. Cancel it first with 🛑 Cancel Signup before closing Chromium.');
+        return;
+      }
+      await browser.close();
+      await sendMenu(chatId, '✅ Chromium closed. Your saved profile remains on the Railway Volume.');
+      return;
+    }
+
+    if (text === '/cancel') {
+      clearFlow(chatId);
+      await sendMenu(chatId, '✅ Signup workflow cancelled. Email/link data was cleared from memory.');
+      return;
+    }
+
+    if (text === '/signup') {
+      if (workflowOwner && String(workflowOwner) !== String(chatId)) {
+        await sendMenu(chatId, 'Another signup workflow is already running.');
         return;
       }
 
-      lastStatus = 'live desktop active';
-      await sendMessage(chatId, 'Starting the hosted Chromium desktop…');
-      await manualSession.start(chatId);
+      workflowOwner = String(chatId);
+      setFlow(chatId, { step: 'checking_location' });
+      await sendMessage(chatId, 'Checking the actual browser location…');
 
-      const desktopUrl = `${config.publicUrl}/desktop/vnc.html?autoconnect=1&resize=scale&path=desktop/websockify`;
-      const username = process.env.DESKTOP_USERNAME || 'browser';
-      await sendMessage(
-        chatId,
-        '🖥 Live browser desktop is ready.\n\n' +
-        `Username: ${username}\n` +
-        'Password: use the DESKTOP_PASSWORD value you set in Railway Variables.\n\n' +
-        'This is the SAME Chromium session/profile that has Surfshark and your custom extension loaded. ' +
-        'You can click, type, open tabs and inspect websites directly like a remote desktop.\n\n' +
-        'When finished, return to Telegram and tap ❌ Close Session.',
-        {
-          reply_markup: {
-            inline_keyboard: [[{ text: '🌐 Open Live Desktop', url: desktopUrl }]]
-          }
-        }
-      );
-      await sendSessionMenu(chatId, 'Live desktop is active. The Telegram manual controls also work on the same browser.');
-      return;
-    }
-
-    // ---- Manual browser session commands ----
-    if (text === '/session_start') {
-      if (running) {
-        await sendMessage(chatId, 'A browser job is already running. Wait for it to finish, then start the manual session.');
-        return;
-      }
-      lastStatus = 'manual session active';
-      await sendMessage(chatId, 'Starting persistent manual Chromium session…');
-      await manualSession.start(chatId);
-      await sendSessionMenu(chatId, manualHelpText());
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text === '/session_close') {
-      await manualSession.close(chatId);
-      lastStatus = 'idle';
-      await sendMenu(chatId, '✅ Manual browser session closed.');
-      return;
-    }
-
-    if (text === '/session_surfshark') {
-      await manualSession.openSurfshark(chatId);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text === '/session_ipcheck') {
-      await manualSession.openIpCheck(chatId);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text === '/session_screenshot') {
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text === '/session_grid') {
-      await sendManualScreenshot(chatId, true);
-      return;
-    }
-
-    if (text === '/session_scroll_up') {
-      await manualSession.scroll(chatId, -650);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text === '/session_scroll_down') {
-      await manualSession.scroll(chatId, 650);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text === '/session_refresh') {
-      await manualSession.refresh(chatId);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text.startsWith('/open ')) {
-      const url = text.slice('/open '.length).trim();
-      await manualSession.goto(chatId, url);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text.startsWith('/click ')) {
-      const parts = text.slice('/click '.length).trim().split(/\s+/);
-      await manualSession.click(chatId, parts[0], parts[1]);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text.startsWith('/type ')) {
-      const value = text.slice('/type '.length);
-      await manualSession.type(chatId, value);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    if (text.startsWith('/key ')) {
-      const key = text.slice('/key '.length).trim();
-      await manualSession.press(chatId, key);
-      await sendManualScreenshot(chatId, false);
-      return;
-    }
-
-    const browserJobCommands = ['/surfshark_login', '/connect_india', '/surfshark_status', '/run'];
-    if (browserJobCommands.includes(text) && manualSession.active) {
-      await sendSessionMenu(chatId, 'A manual browser session is currently open. Close it with ❌ Close Session before running an automatic browser job.');
-      return;
-    }
-
-    if (browserJobCommands.includes(text) && running) {
-      await sendMessage(chatId, 'Another browser job is already running. Wait for it to finish.');
-      return;
-    }
-
-    if (text === '/surfshark_status') {
-      running = true;
-      lastStatus = 'checking Surfshark';
       try {
-        const vpn = await withBrowser(context => checkPublicIp(context, config.expectedCountry));
+        const context = await browser.ensure();
+        const vpn = await verifyIndia(context);
+        const details = vpn.results.map(r => `${r.service}: ${r.country}/${r.ip}`).join('\n');
+        setFlow(chatId, { step: 'awaiting_email' });
+        await sendMessage(chatId, `✅ India verified.\n${details}\n\nSend the email address to use for signup:`);
+      } catch (error) {
+        clearFlow(chatId);
+        await sendMenu(chatId, `❌ ${error.message}`);
+      }
+      return;
+    }
+
+    const flow = getFlow(chatId);
+    if (!flow) return;
+
+    if (flow.step === 'awaiting_email') {
+      if (!looksLikeEmail(text)) {
+        await sendMessage(chatId, 'Send a valid email address, for example name@example.com');
+        return;
+      }
+
+      const email = text.trim();
+      setFlow(chatId, { step: 'running_to_email_link', email });
+      await sendMessage(chatId, 'Running extension Claim/Apply and Netflix signup steps…');
+
+      try {
+        const netflixPage = await claimAndApply(browser, email);
+        await netflixStartAndSendLink(netflixPage, email);
+        setFlow(chatId, { step: 'awaiting_netflix_link', email });
         await sendMessage(
           chatId,
-          `${vpn.ok ? '✅' : '⚠️'} Browser VPN status\n` +
-          `IP: ${vpn.ip}\nCountry: ${vpn.country}\nCity: ${vpn.city}\nProvider: ${vpn.org || 'unknown'}\n` +
-          `India: ${vpn.ok ? 'YES' : 'NO'}\n` +
-          `Checks: ${(vpn.checks || []).map(x => x.country ? `${x.provider}=${x.country}` : `${x.provider}=ERR`).join(', ') || 'n/a'}`
+          '✅ Netflix asked to send the signup link.\n\nCheck that email inbox and paste the FULL Netflix link here.\n\nThe link is used once in this browser session and is not saved to disk.'
         );
-        lastStatus = 'idle';
       } catch (error) {
-        lastStatus = 'failed';
-        console.error(error);
-        await sendMessage(chatId, `❌ Surfshark status failed\n${error.message}`);
-      } finally {
-        running = false;
+        clearFlow(chatId);
+        await sendMenu(chatId, `❌ Signup stopped: ${error.message}\n\nUse 🖥 Live Desktop to inspect the browser if the page/extension UI changed.`);
       }
       return;
     }
 
-    if (text === '/surfshark_login') {
-      running = true;
-      lastStatus = 'waiting for Surfshark login';
-      let context;
+    if (flow.step === 'awaiting_netflix_link') {
+      let link;
       try {
-        ({ context } = await launchBrowser());
-        const { page, code } = await requestLoginCode(context);
-        await sendMessage(
-          chatId,
-          `🔐 Surfshark login code: ${code}\n\n` +
-          'On a device where you are already signed in to Surfshark, open the account/device login-code screen and enter this code.\n\n' +
-          'I will keep this browser open for up to 5 minutes while you approve it.'
-        );
-
-        const loggedIn = await waitForLogin(page);
-        if (!loggedIn) {
-          throw new Error('Timed out waiting for Surfshark login approval. Send /surfshark_login to get a new code.');
-        }
-
-        await sendMenu(chatId, '✅ Surfshark login completed. You can now use 🖥 Manual Session to inspect it yourself.');
-        lastStatus = 'Surfshark logged in';
+        link = validateNetflixLink(text);
       } catch (error) {
-        lastStatus = 'failed';
-        console.error(error);
-        await sendMenu(chatId, `❌ Surfshark login failed\n${error.message}`);
-      } finally {
-        if (context) await context.close().catch(() => {});
-        running = false;
+        await sendMessage(chatId, `❌ ${error.message}`);
+        return;
       }
-      return;
-    }
 
-    if (text === '/connect_india') {
-      running = true;
-      lastStatus = 'connecting Surfshark to India';
+      setFlow(chatId, { step: 'finishing_signup', email: flow.email });
+      await sendMessage(chatId, 'Opening the Netflix email link in the same browser and finishing signup…');
+
       try {
-        const vpn = await withBrowser(context => connectIndia(context));
-        await sendMenu(
-          chatId,
-          `✅ Surfshark connected to India\n` +
-          `Endpoint: ${vpn.endpoint || 'India'}\nIP: ${vpn.ip}\nCountry: ${vpn.country}\nCity: ${vpn.city}\n` +
-          `Checks: ${(vpn.checks || []).map(x => x.country ? `${x.provider}=${x.country}` : `${x.provider}=ERR`).join(', ')}`
-        );
-        lastStatus = 'Surfshark India connected';
+        const result = await finishSignup(browser, link);
+        clearFlow(chatId);
+        await sendMenu(chatId, `✅ Finish Sign Up clicked.\nPage: ${result.title || result.url}`);
       } catch (error) {
-        lastStatus = 'failed';
-        console.error(error);
-        await sendMenu(chatId, `❌ Connect India failed\n${error.message}`);
-      } finally {
-        running = false;
+        clearFlow(chatId);
+        await sendMenu(chatId, `❌ Could not finish signup: ${error.message}\n\nUse 🖥 Live Desktop to inspect the current Netflix page.`);
       }
       return;
-    }
-
-    if (text !== '/run') return;
-
-    running = true;
-    lastStatus = 'running';
-    lastRunAt = new Date().toISOString();
-    await sendMessage(chatId, 'Starting Chromium + extensions…');
-
-    try {
-      const output = await runAutomation();
-      lastStatus = 'completed';
-
-      await sendMessage(
-        chatId,
-        `✅ Completed\n` +
-        `VPN: ${output.vpn.country} / ${output.vpn.city}\n` +
-        `IP: ${output.vpn.ip}\n` +
-        `Page: ${output.result.title}\n` +
-        `URL: ${output.result.url}`
-      );
-
-      if (output.screenshotPath && fs.existsSync(output.screenshotPath)) {
-        await sendPhoto(chatId, output.screenshotPath, 'Automation result');
-        fs.unlink(output.screenshotPath, () => {});
-      }
-    } catch (error) {
-      lastStatus = 'failed';
-      console.error(error);
-      await sendMessage(chatId, `❌ Automation failed\n${error.message}`);
-    } finally {
-      running = false;
     }
   } catch (error) {
-    console.error('Telegram handler error:', error);
-    if (!manualSession.active) {
-      running = false;
-      lastStatus = 'failed';
-    }
+    console.error('Telegram command failed:', error);
     try {
-      if (manualSession.belongsTo(chatId)) {
-        await sendSessionMenu(chatId, `❌ Manual session command failed\n${error.message}`);
-      } else {
-        await sendMenu(chatId, `❌ Command failed\n${error.message}`);
-      }
+      clearFlow(chatId);
+      await sendMenu(chatId, `❌ ${error.message}`);
     } catch {}
   }
 });
 
 app.listen(config.port, '0.0.0.0', async () => {
   console.log(`Listening on 0.0.0.0:${config.port}`);
+  console.log(`Persistent browser profile: ${config.profileDir}`);
   try {
     await setupWebhook();
   } catch (error) {
