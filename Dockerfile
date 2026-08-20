@@ -8,6 +8,9 @@ RUN npx playwright install --with-deps chromium
 
 COPY . .
 
+# Fetch and unpack the official Surfshark Chrome extension during the image build.
+RUN node scripts/download-surfshark.js
+
 ENV NODE_ENV=production
 ENV PORT=10000
 

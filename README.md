@@ -3,11 +3,11 @@
 This starter runs a Telegram webhook on Render. `/run` launches Chromium with:
 
 1. your unpacked Chrome extension (`extensions/custom`)
-2. the unpacked Surfshark Chrome extension (`extensions/surfshark`)
+2. the Surfshark Chrome extension, downloaded automatically during the Docker build (`extensions/surfshark`)
 
 It waits briefly for extension auto-connect, verifies that the public IP country is India, opens `TARGET_URL`, runs `src/user-automation.js`, and sends a screenshot/result to Telegram.
 
-## 1. Put both extensions in the project
+## 1. Put your extension in the project
 
 Your extension:
 
@@ -15,13 +15,9 @@ Your extension:
 extensions/custom/manifest.json
 ```
 
-Surfshark:
+Do not nest it one extra folder deep.
 
-```text
-extensions/surfshark/manifest.json
-```
-
-Do not nest them one extra folder deep.
+**Surfshark is automatic.** During `docker build`, `scripts/download-surfshark.js` downloads the official Surfshark Chrome extension and extracts it into `extensions/surfshark`. You do not need to upload Surfshark manually.
 
 ## 2. Surfshark setup
 
@@ -92,6 +88,8 @@ PROFILE_DIR=/tmp/browser-profile
 CUSTOM_EXTENSION_DIR=/app/extensions/custom
 SURFSHARK_EXTENSION_DIR=/app/extensions/surfshark
 ```
+
+The Docker build downloads Surfshark automatically. The default official extension ID is `ailoabdmgclmfmhdagmlohpjlbpffblp`.
 
 Optional security:
 
