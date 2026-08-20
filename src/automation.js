@@ -68,4 +68,4 @@ async function runAutomation() {
   }
 }
 
-module.exports = { runAutomation };
+module.exports = { runAutomation, launchBrowser };
