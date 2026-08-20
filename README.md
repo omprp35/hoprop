@@ -148,3 +148,6 @@ Send `/start` once. The bot now shows persistent buttons for:
 - 🆔 My ID
 
 `Connect India` opens Surfshark's location list control, searches for India, selects the top India/Fastest result, and verifies the browser public IP is actually in India before reporting success.
+
+## India connection v4
+The Connect India action now performs a clean disconnect before changing locations, then automatically tries Mumbai, Delhi, and India/Fastest until multiple independent IP-geolocation checks confirm India. This prevents a stale previous Surfshark tunnel from remaining active while the UI shows a newly selected India location.
