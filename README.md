@@ -151,3 +151,25 @@ Send `/start` once. The bot now shows persistent buttons for:
 
 ## India connection v4
 The Connect India action now performs a clean disconnect before changing locations, then automatically tries Mumbai, Delhi, and India/Fastest until multiple independent IP-geolocation checks confirm India. This prevents a stale previous Surfshark tunnel from remaining active while the UI shows a newly selected India location.
+
+## Manual browser session (Telegram remote control)
+
+This build adds a manual persistent Chromium session so you can inspect Surfshark or any public webpage yourself from Telegram.
+
+Tap **🖥 Manual Session**. The bot keeps the same Chromium context open and sends a screenshot. Session buttons let you open Surfshark, open an IP-check page, take screenshots, show a coordinate grid, scroll, refresh, and close the session.
+
+Commands available while the session is active:
+
+```text
+/open example.com
+/click 640 450
+/type india
+/key Enter
+/session_screenshot
+/session_grid
+/session_close
+```
+
+The browser viewport is **1280×900**. Use **🧭 Coordinate Grid** to make `/click X Y` easier. The session automatically closes after 15 minutes of inactivity by default; change `MANUAL_SESSION_MINUTES` if needed.
+
+For security, `/open` blocks localhost/private-network addresses. Avoid sending passwords with `/type`, because Telegram stores your message history. Use Surfshark's device login-code flow instead.
