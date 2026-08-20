@@ -199,7 +199,52 @@ async function connectIndia(context) {
     if (openedChooser) break;
   }
 
-  // Fallback: click a visible location-selection control near the Connect button.
+  // Connected-state fallback (Surfshark 5.2.x): the selected-location card may
+  // show only the country name (for example "Hong Kong"), so there is no
+  // "Fastest location" text to match. Find the clickable card immediately
+  // above the "Recently used" section using its screen position.
+  if (!openedChooser) {
+    const recent = page.getByText(/recently\s+used/i).first();
+    const recentBox = await recent.boundingBox().catch(() => null);
+
+    if (recentBox) {
+      const candidates = page.locator('button, [role="button"], [tabindex="0"]');
+      const count = await candidates.count().catch(() => 0);
+      const ranked = [];
+
+      for (let i = 0; i < Math.min(count, 120); i += 1) {
+        const el = candidates.nth(i);
+        if (!(await el.isVisible().catch(() => false))) continue;
+        const box = await el.boundingBox().catch(() => null);
+        if (!box) continue;
+
+        const bottom = box.y + box.height;
+        const verticalGap = recentBox.y - bottom;
+        const horizontallyOverlaps = box.x < recentBox.x + recentBox.width &&
+          box.x + box.width > recentBox.x;
+
+        // Location card is directly above "Recently used" on the right panel.
+        if (verticalGap >= -5 && verticalGap < 220 && horizontallyOverlaps && box.width > 120) {
+          const txt = ((await el.innerText().catch(() => '')) || '').trim();
+          if (/pause|connect|power|turn\s+on/i.test(txt)) continue;
+          ranked.push({ el, gap: Math.max(0, verticalGap), txt });
+        }
+      }
+
+      ranked.sort((a, b) => a.gap - b.gap);
+      for (const candidate of ranked.slice(0, 8)) {
+        await candidate.el.click({ timeout: 3000 }).catch(() => {});
+        await sleep(700);
+        const popupText = await page.locator('body').innerText().catch(() => '');
+        if (/choose\s+location/i.test(popupText) && /search/i.test(popupText)) {
+          openedChooser = true;
+          break;
+        }
+      }
+    }
+  }
+
+  // Text fallback for other Surfshark layouts.
   if (!openedChooser) {
     await clickByText(page, [/locations?/i, /all\s*locations/i]);
     await sleep(700);
