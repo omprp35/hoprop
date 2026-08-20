@@ -294,31 +294,66 @@ async function connectIndia(context) {
   // India / Fastest
   // Mumbai / India – Virtual Location
   // Delhi / India – Virtual Location
-  // Click the top exact "India" row (Fastest), never Indonesia.
-  const indiaTexts = page.getByText('India', { exact: true });
-  const indiaCount = await indiaTexts.count().catch(() => 0);
+  //
+  // Surfshark 5.2.x renders the country label inside nested elements, so
+  // Playwright getByText(..., { exact: true }) can miss it even though
+  // body.innerText clearly contains "India". Use normalized DOM text and
+  // prefer the clickable row that also contains "Fastest".
   let clickedIndia = false;
 
-  for (let i = 0; i < indiaCount; i += 1) {
-    const india = indiaTexts.nth(i);
-    if (!(await india.isVisible().catch(() => false))) continue;
+  const clickableRows = page.locator('button, [role="button"], [tabindex="0"]');
+  const rowCount = await clickableRows.count().catch(() => 0);
 
-    // Prefer the clickable row/container containing the exact India text.
-    const row = india.locator('xpath=ancestor::*[self::button or @role="button" or @tabindex="0"][1]');
-    if (await row.count().catch(() => 0)) {
+  // First choice: a visible clickable row containing both India and Fastest.
+  for (let i = 0; i < Math.min(rowCount, 220); i += 1) {
+    const row = clickableRows.nth(i);
+    if (!(await row.isVisible().catch(() => false))) continue;
+    const rowText = ((await row.innerText().catch(() => '')) || '').replace(/\s+/g, ' ').trim();
+    if (/\bIndia\b/i.test(rowText) && /\bFastest\b/i.test(rowText) && !/Indonesia/i.test(rowText)) {
       await row.click({ force: true, timeout: 4000 }).catch(() => {});
-    } else {
-      await india.click({ force: true, timeout: 4000 }).catch(() => {});
+      await sleep(1200);
+      clickedIndia = true;
+      break;
+    }
+  }
+
+  // Second choice: find the smallest visible DOM element whose own normalized
+  // text is exactly India, then click its nearest clickable ancestor.
+  if (!clickedIndia) {
+    const indiaNodes = page.locator('xpath=//*[normalize-space(text())="India"]');
+    const count = await indiaNodes.count().catch(() => 0);
+    const candidates = [];
+
+    for (let i = 0; i < Math.min(count, 40); i += 1) {
+      const node = indiaNodes.nth(i);
+      if (!(await node.isVisible().catch(() => false))) continue;
+      const box = await node.boundingBox().catch(() => null);
+      if (!box) continue;
+      candidates.push({ node, box, area: box.width * box.height });
     }
 
-    await sleep(1200);
-    clickedIndia = true;
-    break;
+    candidates.sort((a, b) => a.area - b.area || a.box.y - b.box.y);
+
+    for (const candidate of candidates) {
+      const row = candidate.node.locator('xpath=ancestor::*[self::button or @role="button" or @tabindex="0"][1]');
+      if (await row.count().catch(() => 0)) {
+        await row.click({ force: true, timeout: 4000 }).catch(() => {});
+      } else {
+        // Last-resort coordinate click on the India label itself.
+        await page.mouse.click(
+          candidate.box.x + candidate.box.width / 2,
+          candidate.box.y + candidate.box.height / 2
+        ).catch(() => {});
+      }
+      await sleep(1200);
+      clickedIndia = true;
+      break;
+    }
   }
 
   if (!clickedIndia) {
     const text = await page.locator('body').innerText().catch(() => '');
-    throw new Error(`India result was not found in Surfshark location chooser. Popup text: ${text.slice(0, 700)}`);
+    throw new Error(`India result was visible in Surfshark text but no clickable India/Fastest row was found. Popup text: ${text.slice(0, 900)}`);
   }
 
   // Selecting India normally starts connecting immediately. If Surfshark
