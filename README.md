@@ -173,3 +173,47 @@ Commands available while the session is active:
 The browser viewport is **1280×900**. Use **🧭 Coordinate Grid** to make `/click X Y` easier. The session automatically closes after 15 minutes of inactivity by default; change `MANUAL_SESSION_MINUTES` if needed.
 
 For security, `/open` blocks localhost/private-network addresses. Avoid sending passwords with `/type`, because Telegram stores your message history. Use Surfshark's device login-code flow instead.
+
+## Live desktop (RDP-like noVNC) — v6
+
+This build adds a real-time browser desktop you can control with mouse and keyboard in a normal web browser. It is not Microsoft RDP; it uses **noVNC**, but the experience is similar for this project.
+
+Railway runs:
+
+- Xvfb virtual monitor
+- Openbox window manager
+- Chromium + Surfshark + your custom extension
+- x11vnc locally
+- noVNC/WebSocket locally
+- nginx on Railway's public `PORT`
+- Telegram/Express on internal `APP_PORT=10001`
+
+### Required Railway variables
+
+Add these in **Railway → Service → Variables**:
+
+```text
+DESKTOP_USERNAME=browser
+DESKTOP_PASSWORD=YOUR_LONG_UNIQUE_PASSWORD
+APP_PORT=10001
+MANUAL_SESSION_MINUTES=60
+```
+
+Keep all your existing Telegram, extension, profile and URL variables too.
+
+`DESKTOP_PASSWORD` is required. The container intentionally refuses to start without it because `/desktop/` is a remote-control surface.
+
+### How to use
+
+1. Deploy v6.
+2. In Telegram send `/start`.
+3. Tap **🖥 Live Desktop**.
+4. Tap **🌐 Open Live Desktop** in the bot reply.
+5. Your browser asks for HTTP Basic Authentication:
+   - username: your `DESKTOP_USERNAME` (`browser` by default)
+   - password: your Railway `DESKTOP_PASSWORD`
+6. noVNC opens and shows the live hosted Chromium window.
+7. Use it directly with your mouse and keyboard. You can open Surfshark, change VPN location, open tabs, and visit IP-check websites in the same Chromium profile.
+8. When done, return to Telegram and tap **❌ Close Session**.
+
+The live desktop and Telegram manual controls operate the **same Playwright Chromium context**. Do not run automatic browser jobs while the manual/live session is open.

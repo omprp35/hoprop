@@ -31,3 +31,16 @@ Telegram commands:
 /run
 /status
 /id
+
+## v6 live desktop variables
+
+Add:
+
+```text
+DESKTOP_USERNAME=browser
+DESKTOP_PASSWORD=use-a-long-unique-password
+APP_PORT=10001
+MANUAL_SESSION_MINUTES=60
+```
+
+The public Railway `PORT` remains `10000` (or Railway's injected value). nginx listens on it and routes `/desktop/` to noVNC and everything else to the Telegram/Express app.
