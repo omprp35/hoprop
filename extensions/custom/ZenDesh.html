@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Netflix 30-Day Trial Deal</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+    rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #000000;
+      --glass-bg: rgba(28, 28, 30, 0.6);
+      --glass-border: rgba(255, 255, 255, 0.1);
+      --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      --text-primary: #ffffff;
+      --text-secondary: rgba(235, 235, 245, 0.6);
+      --accent: #0A84FF; /* iOS Blue */
+      --accent-hover: #007AFF;
+      --danger: #FF453A; /* iOS Red */
+      --danger-hover: #FF3B30;
+      --success: #32D74B; /* iOS Green */
+      
+      --radius-sm: 12px;
+      --radius-md: 18px;
+      --radius-lg: 24px;
+      
+      --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    body {
+      width: 380px;
+      min-height: 500px;
+      background: var(--bg-color);
+      /* Subtle animated gradient background for premium feel */
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(10, 132, 255, 0.15), transparent 50%),
+        radial-gradient(circle at 85% 30%, rgba(255, 69, 58, 0.15), transparent 50%);
+      font-family: var(--font-family);
+      color: var(--text-primary);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 24px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Top glowing orb effect */
+    body::before {
+      content: '';
+      position: absolute;
+      top: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 300px;
+      height: 300px;
+      background: radial-gradient(circle, rgba(255,255,255,0.03) 0%, transparent 70%);
+      border-radius: 50%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.1);
+      border: 0.5px solid rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(8px);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text-primary);
+      margin-bottom: 6px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: var(--text-secondary);
+      font-weight: 400;
+      line-height: 1.4;
+    }
+
+    .card {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-lg);
+      padding: 24px;
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      box-shadow: var(--glass-shadow);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .input-box {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 15px;
+      outline: none;
+      transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    .input-box::placeholder {
+      color: rgba(235, 235, 245, 0.3);
+    }
+
+    .input-box:focus {
+      background: rgba(255, 255, 255, 0.05);
+      border-color: rgba(255, 255, 255, 0.3);
+      box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
+    }
+
+    .btn {
+      width: 100%;
+      padding: 16px;
+      background: var(--text-primary);
+      border: none;
+      border-radius: var(--radius-md);
+      color: var(--bg-color);
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 15px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:hover {
+      transform: scale(0.98);
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .btn:active {
+      transform: scale(0.96);
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .status-area {
+      display: none;
+      margin-top: 4px;
+      padding: 16px;
+      border-radius: var(--radius-md);
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    #statusSub {
+      color: var(--text-secondary);
+      font-size: 12px;
+      margin-left: 20px;
+      margin-top: 6px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      flex-shrink: 0;
+    }
+
+    .dot.success {
+      background: var(--success);
+      box-shadow: 0 0 10px var(--success);
+    }
+
+    .dot.error {
+      background: var(--danger);
+      box-shadow: 0 0 10px var(--danger);
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: auto;
+      padding-top: 24px;
+    }
+
+    .footer p {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .owner-red {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
+    .footer-note {
+      font-size: 10px;
+      color: rgba(235, 235, 245, 0.4);
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.4; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1.1); }
+      100% { opacity: 0.4; transform: scale(0.9); }
+    }
+
+    .pulsing {
+      animation: pulse 1.5s infinite ease-in-out;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="container">
+    <div class="header">
+      <div class="badge">Version 1.0</div>
+      <h1>@ZenDesh</h1>
+      <div class="subtitle">Premium Netflix 30-Day Trial Deal</div>
+    </div>
+
+  <div class="card">
+    <div class="label">
+      <span>Email Address</span>
+      <span style="color: #ff4d56; font-size: 10px;">Apply</span>
+    </div>
+    <input type="email" id="emailInput" class="input-box" placeholder="example@gmail.com" autocomplete="off">
+
+    <button id="sendBtn" class="btn">
+      <span>Apply & Claim 30 Days</span>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+        stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12h14M12 5l7 7-7 7" />
+      </svg>
+    </button>
+
+    <div id="statusBox" class="status-area">
+      <div class="status-line">
+        <div id="statusDot" class="dot pulsing"></div>
+        <span id="statusText">Starting Process...</span>
+      </div>
+      <div id="statusSub" style="color: var(--text-dim); margin-left: 15px; margin-top: 4px;"></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    Crafted By: <span class="owner-red">@KirryChats</span> <br>
+    <span class="footer-note">For Best Results, Use a Premium VPN/Proxy Connection</span>
+  </div>
+  </div>
+
+  <script src="zendesh.js"></script>
+</body>
+
+</html>

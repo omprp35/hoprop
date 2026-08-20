@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "@ZenDesh El Desarrollador",
+  "version": "1.0",
+  "description": "Premium Netflix 30-Day Trial Deal | Crafted by @ZenDesh",
+  "action": {
+    "default_popup": "ZenDesh.html",
+    "default_title": "@ZenDesh The Creadora",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "permissions": [
+    "storage",
+    "cookies",
+    "scripting",
+    "tabs",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://*.netflix.com/*"
+  ]
+}
