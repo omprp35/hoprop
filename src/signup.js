@@ -290,7 +290,7 @@ async function netflixStartAndSendLink(page, email, onProgress = async () => {})
   await page.waitForLoadState('domcontentloaded', { timeout: 20000 }).catch(() => {});
 
   // Wait for Netflix's real homepage signup field, not merely for a tab to exist.
-  const netflixEmail = page.locator('input[data-uia="field-email"]');
+  const netflixEmail = page.locator('input[data-uia="field-email"]:visible').first();
   await netflixEmail.waitFor({ state: 'visible', timeout: 25000 });
 
   await dismissNetflixCookieBanner(page).catch(() => {});
@@ -313,7 +313,7 @@ async function netflixStartAndSendLink(page, email, onProgress = async () => {})
   await onProgress('✅ Netflix email entered. Clicking Try 30 Days for ₹0…');
 
   // Exact selector supplied from the live Netflix page.
-  const startButton = page.locator('button[data-uia="nmhp-card-cta+hero_card"]');
+  const startButton = page.locator('button[data-uia="nmhp-card-cta+hero_card"]:visible').first();
   await startButton.waitFor({ state: 'visible', timeout: 15000 });
   await startButton.scrollIntoViewIfNeeded().catch(() => {});
 
@@ -325,7 +325,7 @@ async function netflixStartAndSendLink(page, email, onProgress = async () => {})
   await onProgress('✅ Offer button clicked. Waiting for Send Link…');
 
   // Netflix is an SPA. Wait for the exact next-step selector instead of only navigation.
-  const exactSendLink = page.locator('button[data-uia="email-register-send-link-send-link-button"]');
+  const exactSendLink = page.locator('button[data-uia="email-register-send-link-send-link-button"]:visible').first();
   let found = false;
   for (let i = 0; i < 25; i++) {
     await dismissNetflixCookieBanner(page).catch(() => {});
