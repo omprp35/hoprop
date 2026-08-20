@@ -135,3 +135,16 @@ returns `ok`.
 - Use Render environment variables/secrets.
 - Prefer a private GitHub repository if your custom extension is proprietary.
 - Restrict the bot using `AUTHORIZED_CHAT_IDS` before production use.
+
+## Telegram buttons
+
+Send `/start` once. The bot now shows persistent buttons for:
+
+- 🔐 Surfshark Login
+- 🇮🇳 Connect India
+- 🌍 VPN Status
+- ▶️ Run Automation
+- 📊 Bot Status
+- 🆔 My ID
+
+`Connect India` opens Surfshark's location list control, searches for India, selects the top India/Fastest result, and verifies the browser public IP is actually in India before reporting success.
