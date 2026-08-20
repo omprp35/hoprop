@@ -1,46 +1,13 @@
 # Railway setup
 
-Use these Railway variables:
+1. Upload the project to GitHub.
+2. Keep your real custom extension in `extensions/custom/`.
+3. Mount a Railway Volume at `/data`.
+4. Set `PROFILE_DIR=/data/browser-profile`.
+5. Keep the existing Telegram and Live Desktop variables.
+6. Redeploy.
+7. In Telegram send `/start`.
+8. Open **🖥 Live Desktop**, connect Surfshark to India manually, and verify browsing works.
+9. Tap **▶️ Start Signup**.
 
-- TELEGRAM_BOT_TOKEN = your BotFather token
-- TELEGRAM_WEBHOOK_SECRET = a long random string
-- PUBLIC_URL = your Railway public HTTPS URL, without a trailing slash
-- TARGET_URL = website your automation should open
-- EXPECTED_COUNTRY = IN
-- CUSTOM_EXTENSION_DIR = /app/extensions/custom
-- SURFSHARK_EXTENSION_DIR = /app/extensions/surfshark
-- PROFILE_DIR = /data/browser-profile (recommended with a Railway Volume mounted at /data)
-- AUTHORIZED_CHAT_IDS = your Telegram chat ID (recommended)
-- PORT = 10000 (optional; Railway can also inject PORT)
-
-Set Railway healthcheck path to:
-
-/health
-
-Recommended persistent volume:
-
-Mount path: /data
-
-Then use PROFILE_DIR=/data/browser-profile so Surfshark login/session data survives redeploys/restarts.
-
-Telegram commands:
-
-/surfshark_login
-/connect_india
-/surfshark_status
-/run
-/status
-/id
-
-## v6 live desktop variables
-
-Add:
-
-```text
-DESKTOP_USERNAME=browser
-DESKTOP_PASSWORD=use-a-long-unique-password
-APP_PORT=10001
-MANUAL_SESSION_MINUTES=60
-```
-
-The public Railway `PORT` remains `10000` (or Railway's injected value). nginx listens on it and routes `/desktop/` to noVNC and everything else to the Telegram/Express app.
+If the bot says India is not verified, do not change code. Open Live Desktop and reconnect Surfshark manually, then retry.

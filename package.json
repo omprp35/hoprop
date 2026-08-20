@@ -1,20 +1,19 @@
 {
-  "name": "telegram-render-browser-bot",
-  "version": "1.0.0",
+  "name": "telegram-railway-live-browser",
+  "version": "2.0.0",
   "private": true,
-  "description": "Telegram webhook + Playwright Chromium + custom extensions for Render",
+  "description": "Minimal Telegram-controlled live Chromium desktop for Railway",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node src/check-extensions.js",
     "download:surfshark": "node scripts/download-surfshark.js"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "express": "^5.1.0",
-    "playwright": "^1.55.0",
-    "adm-zip": "^0.5.16"
+    "playwright": "^1.55.0"
   }
 }

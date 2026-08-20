@@ -1,219 +1,84 @@
-# Telegram + Render + Playwright + Chrome Extensions
+# Railway Live Desktop + Signup Automation v8
 
-This starter runs a Telegram webhook on Render. `/run` launches Chromium with:
+This version keeps the live noVNC desktop and adds one Telegram-controlled signup workflow.
 
-1. your unpacked Chrome extension (`extensions/custom`)
-2. the Surfshark Chrome extension, downloaded automatically during the Docker build (`extensions/surfshark`)
+## Telegram buttons
 
-It waits briefly for extension auto-connect, verifies that the public IP country is India, opens `TARGET_URL`, runs `src/user-automation.js`, and sends a screenshot/result to Telegram.
+- ▶️ **Start Signup**
+- 🖥 **Live Desktop**
+- 🔄 **Restart Browser**
+- ❌ **Close Browser**
+- 🛑 **Cancel Signup**
 
-## 1. Put your extension in the project
+## Signup workflow
 
-Your extension:
+1. Bot starts/reuses Chromium and verifies the **actual browser traffic** is India.
+2. Bot asks the user for an email address.
+3. Bot opens your custom extension popup, enters that email, clicks **Claim** then **Apply** (or a combined Claim/Apply button).
+4. Bot waits for the Netflix tab opened by the extension.
+5. Bot enters the same email on Netflix and clicks **Get Started**.
+6. Bot clicks **Send Link**.
+7. Bot asks the user to paste the Netflix link received by email.
+8. Bot validates that it is an HTTPS `netflix.com` link, opens it in the **same Chromium profile**, and clicks **Finish Sign Up**.
+
+The email and Netflix link are held only in process memory for the active workflow. They are not written to disk by this project.
+
+## Surfshark
+
+This project does **not** automate Surfshark location switching.
+
+Use **Live Desktop** to log in and connect Surfshark to India manually. Recommended:
+
+- Railway Volume mounted at `/data`
+- `PROFILE_DIR=/data/browser-profile`
+- Surfshark Auto-connect enabled after you confirm the India connection works manually
+
+The signup workflow verifies the browser's external country before asking for the email. If India is not verified, it stops and asks you to fix Surfshark in Live Desktop.
+
+## Custom extension
+
+Put your unpacked extension directly in:
+
+```text
+extensions/custom/
+```
+
+Required:
 
 ```text
 extensions/custom/manifest.json
 ```
 
-Do not nest it one extra folder deep.
+The extension should expose a popup via either:
 
-**Surfshark is automatic.** During `docker build`, `scripts/download-surfshark.js` downloads the official Surfshark Chrome extension and extracts it into `extensions/surfshark`. You do not need to upload Surfshark manually.
-
-## 2. Surfshark setup
-
-In a persistent Chromium profile, log in to Surfshark and set:
-
-- Default location: **India**
-- **Auto-connect: ON**
-
-The bot verifies the country before it runs your target-site automation.
-
-### Render Free limitation
-
-Render Free uses an ephemeral filesystem. A browser login/profile created at runtime can be lost after the service spins down/restarts/redeploys.
-
-For initial testing:
-
-```text
-PROFILE_DIR=/tmp/browser-profile
+```json
+"action": { "default_popup": "popup.html" }
 ```
 
-For reliable Surfshark login persistence, use a paid Render service with a persistent disk mounted at `/var/data`, then use:
+or Manifest V2 `browser_action.default_popup`.
 
-```text
-PROFILE_DIR=/var/data/browser-profile
-```
+The automation looks for an email field and buttons whose visible names are `Claim` and `Apply`, or a combined `Claim & Apply` / `Claim and Apply` button.
 
-## 3. Customize the automation
-
-Edit:
-
-```text
-src/user-automation.js
-```
-
-Example:
-
-```js
-await page.goto(targetUrl);
-await page.fill('#email', 'example@example.com');
-await page.click('#continue');
-```
-
-## 4. Create the Telegram bot
-
-Create a bot with Telegram's @BotFather and copy its token.
-
-## 5. Deploy to Render
-
-Push this folder to a GitHub repository.
-
-In Render:
-
-1. New -> Web Service
-2. Connect the GitHub repository
-3. Runtime/Language -> Docker
-4. Choose your service plan
-5. Add environment variables
-
-Required:
+## Railway variables
 
 ```text
 TELEGRAM_BOT_TOKEN=...
-PUBLIC_URL=https://YOUR-SERVICE.onrender.com
-TELEGRAM_WEBHOOK_SECRET=some_long_random_value
-TARGET_URL=https://example.com
-EXPECTED_COUNTRY=IN
-PROFILE_DIR=/tmp/browser-profile
+TELEGRAM_WEBHOOK_SECRET=...
+PUBLIC_URL=https://YOUR-SERVICE.up.railway.app
+DESKTOP_USERNAME=browser
+DESKTOP_PASSWORD=USE_A_STRONG_PASSWORD
+PROFILE_DIR=/data/browser-profile
 CUSTOM_EXTENSION_DIR=/app/extensions/custom
 SURFSHARK_EXTENSION_DIR=/app/extensions/surfshark
+APP_PORT=10001
 ```
 
-The Docker build downloads Surfshark automatically. The default official extension ID is `ailoabdmgclmfmhdagmlohpjlbpffblp`.
-
-Optional security:
+Optional:
 
 ```text
 AUTHORIZED_CHAT_IDS=123456789
 ```
 
-If you don't know the chat ID yet, leave it blank, deploy, message `/id`, then set `AUTHORIZED_CHAT_IDS` to that number and redeploy.
+## Important first test
 
-## 6. Telegram commands
-
-```text
-/start
-/run
-/status
-/id
-```
-
-`/run` performs:
-
-```text
-Telegram
- -> Render webhook
- -> Chromium
- -> Surfshark extension auto-connect
- -> verify India IP
- -> your Chrome extension
- -> your automation
- -> screenshot/result to Telegram
-```
-
-## Health route
-
-```text
-GET /health
-```
-
-returns `ok`.
-
-## Security notes
-
-- Never commit Telegram tokens or Surfshark credentials to GitHub.
-- Use Render environment variables/secrets.
-- Prefer a private GitHub repository if your custom extension is proprietary.
-- Restrict the bot using `AUTHORIZED_CHAT_IDS` before production use.
-
-## Telegram buttons
-
-Send `/start` once. The bot now shows persistent buttons for:
-
-- 🔐 Surfshark Login
-- 🇮🇳 Connect India
-- 🌍 VPN Status
-- ▶️ Run Automation
-- 📊 Bot Status
-- 🆔 My ID
-
-`Connect India` opens Surfshark's location list control, searches for India, selects the top India/Fastest result, and verifies the browser public IP is actually in India before reporting success.
-
-## India connection v4
-The Connect India action now performs a clean disconnect before changing locations, then automatically tries Mumbai, Delhi, and India/Fastest until multiple independent IP-geolocation checks confirm India. This prevents a stale previous Surfshark tunnel from remaining active while the UI shows a newly selected India location.
-
-## Manual browser session (Telegram remote control)
-
-This build adds a manual persistent Chromium session so you can inspect Surfshark or any public webpage yourself from Telegram.
-
-Tap **🖥 Manual Session**. The bot keeps the same Chromium context open and sends a screenshot. Session buttons let you open Surfshark, open an IP-check page, take screenshots, show a coordinate grid, scroll, refresh, and close the session.
-
-Commands available while the session is active:
-
-```text
-/open example.com
-/click 640 450
-/type india
-/key Enter
-/session_screenshot
-/session_grid
-/session_close
-```
-
-The browser viewport is **1280×900**. Use **🧭 Coordinate Grid** to make `/click X Y` easier. The session automatically closes after 15 minutes of inactivity by default; change `MANUAL_SESSION_MINUTES` if needed.
-
-For security, `/open` blocks localhost/private-network addresses. Avoid sending passwords with `/type`, because Telegram stores your message history. Use Surfshark's device login-code flow instead.
-
-## Live desktop (RDP-like noVNC) — v6
-
-This build adds a real-time browser desktop you can control with mouse and keyboard in a normal web browser. It is not Microsoft RDP; it uses **noVNC**, but the experience is similar for this project.
-
-Railway runs:
-
-- Xvfb virtual monitor
-- Openbox window manager
-- Chromium + Surfshark + your custom extension
-- x11vnc locally
-- noVNC/WebSocket locally
-- nginx on Railway's public `PORT`
-- Telegram/Express on internal `APP_PORT=10001`
-
-### Required Railway variables
-
-Add these in **Railway → Service → Variables**:
-
-```text
-DESKTOP_USERNAME=browser
-DESKTOP_PASSWORD=YOUR_LONG_UNIQUE_PASSWORD
-APP_PORT=10001
-MANUAL_SESSION_MINUTES=60
-```
-
-Keep all your existing Telegram, extension, profile and URL variables too.
-
-`DESKTOP_PASSWORD` is required. The container intentionally refuses to start without it because `/desktop/` is a remote-control surface.
-
-### How to use
-
-1. Deploy v6.
-2. In Telegram send `/start`.
-3. Tap **🖥 Live Desktop**.
-4. Tap **🌐 Open Live Desktop** in the bot reply.
-5. Your browser asks for HTTP Basic Authentication:
-   - username: your `DESKTOP_USERNAME` (`browser` by default)
-   - password: your Railway `DESKTOP_PASSWORD`
-6. noVNC opens and shows the live hosted Chromium window.
-7. Use it directly with your mouse and keyboard. You can open Surfshark, change VPN location, open tabs, and visit IP-check websites in the same Chromium profile.
-8. When done, return to Telegram and tap **❌ Close Session**.
-
-The live desktop and Telegram manual controls operate the **same Playwright Chromium context**. Do not run automatic browser jobs while the manual/live session is open.
+Because the exact HTML of your custom extension and Netflix pages can change, test one signup while watching **Live Desktop**. If a selector fails, the bot will stop and tell you which stage failed instead of repeatedly clicking.
