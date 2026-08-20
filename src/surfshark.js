@@ -266,7 +266,7 @@ async function connectIndia(context) {
   const { page } = await openSurfsharkPopup(context);
   await sleep(900);
 
-  // If the browser already exits through India, keep the current connection.
+  // If browser traffic already exits through India, keep the current connection.
   let vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
   if (vpn?.ok) return vpn;
 
@@ -278,107 +278,121 @@ async function connectIndia(context) {
   const openedChooser = await openLocationChooser(page);
   if (!openedChooser) {
     const text = await page.locator('body').innerText().catch(() => '');
-    throw new Error(`Could not open Surfshark location chooser. Popup text: ${text.slice(0, 700)}`);
+    throw new Error(`Could not open Surfshark location chooser. Popup text: ${text.slice(0, 900)}`);
   }
 
-  // Search for India in the chooser.
+  // Search for India.
   const search = page.locator('input[placeholder*="Search" i], input[aria-label*="Search" i], input').first();
   if (!(await search.isVisible().catch(() => false))) {
     throw new Error('Surfshark location search box was not found.');
   }
 
   await search.fill('india');
-  await sleep(900);
+  await sleep(1000);
 
-  // Results currently look like:
-  // India / Fastest
-  // Mumbai / India – Virtual Location
-  // Delhi / India – Virtual Location
+  // Surfshark 5.2.x currently shows:
+  //   India   / Fastest
+  //   Mumbai  / India – Virtual Location
+  //   Delhi   / India – Virtual Location
   //
-  // Surfshark 5.2.x renders the country label inside nested elements, so
-  // Playwright getByText(..., { exact: true }) can miss it even though
-  // body.innerText clearly contains "India". Use normalized DOM text and
-  // prefer the clickable row that also contains "Fastest".
-  let clickedIndia = false;
-
-  const clickableRows = page.locator('button, [role="button"], [tabindex="0"]');
-  const rowCount = await clickableRows.count().catch(() => 0);
-
-  // First choice: a visible clickable row containing both India and Fastest.
-  for (let i = 0; i < Math.min(rowCount, 220); i += 1) {
-    const row = clickableRows.nth(i);
-    if (!(await row.isVisible().catch(() => false))) continue;
-    const rowText = ((await row.innerText().catch(() => '')) || '').replace(/\s+/g, ' ').trim();
-    if (/\bIndia\b/i.test(rowText) && /\bFastest\b/i.test(rowText) && !/Indonesia/i.test(rowText)) {
-      await row.click({ force: true, timeout: 4000 }).catch(() => {});
-      await sleep(1200);
-      clickedIndia = true;
-      break;
-    }
-  }
-
-  // Second choice: find the smallest visible DOM element whose own normalized
-  // text is exactly India, then click its nearest clickable ancestor.
-  if (!clickedIndia) {
-    const indiaNodes = page.locator('xpath=//*[normalize-space(text())="India"]');
-    const count = await indiaNodes.count().catch(() => 0);
-    const candidates = [];
-
-    for (let i = 0; i < Math.min(count, 40); i += 1) {
-      const node = indiaNodes.nth(i);
+  // Prefer Mumbai because it is an unambiguous India endpoint. This avoids
+  // accidentally selecting a generic "Fastest" action and ending up in GB/SG.
+  async function clickVisibleExactText(label) {
+    const nodes = page.locator(`xpath=//*[normalize-space(text())="${label}"]`);
+    const count = await nodes.count().catch(() => 0);
+    for (let i = 0; i < Math.min(count, 30); i += 1) {
+      const node = nodes.nth(i);
       if (!(await node.isVisible().catch(() => false))) continue;
       const box = await node.boundingBox().catch(() => null);
       if (!box) continue;
-      candidates.push({ node, box, area: box.width * box.height });
-    }
 
-    candidates.sort((a, b) => a.area - b.area || a.box.y - b.box.y);
-
-    for (const candidate of candidates) {
-      const row = candidate.node.locator('xpath=ancestor::*[self::button or @role="button" or @tabindex="0"][1]');
-      if (await row.count().catch(() => 0)) {
-        await row.click({ force: true, timeout: 4000 }).catch(() => {});
-      } else {
-        // Last-resort coordinate click on the India label itself.
-        await page.mouse.click(
-          candidate.box.x + candidate.box.width / 2,
-          candidate.box.y + candidate.box.height / 2
-        ).catch(() => {});
-      }
+      // Click the text itself first. Surfshark's React rows handle bubbled clicks.
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
       await sleep(1200);
-      clickedIndia = true;
+      return true;
+    }
+    return false;
+  }
+
+  let selected = false;
+  for (const location of ['Mumbai', 'Delhi']) {
+    if (await clickVisibleExactText(location)) {
+      selected = true;
       break;
     }
   }
 
-  if (!clickedIndia) {
-    const text = await page.locator('body').innerText().catch(() => '');
-    throw new Error(`India result was visible in Surfshark text but no clickable India/Fastest row was found. Popup text: ${text.slice(0, 900)}`);
+  // Fallback to the country-level India row only if city rows are unavailable.
+  if (!selected) {
+    selected = await clickVisibleExactText('India');
   }
 
-  // Selecting India normally starts connecting immediately. If Surfshark
-  // returns to the dashboard with a Connect button, click it once.
-  for (let i = 0; i < 10; i += 1) {
-    await sleep(700);
+  if (!selected) {
     const text = await page.locator('body').innerText().catch(() => '');
-    if (/connected\s+and\s+safe/i.test(text) && /india/i.test(text)) break;
+    throw new Error(`No India/Mumbai/Delhi result could be clicked. Popup text: ${text.slice(0, 1000)}`);
+  }
 
+  // Wait for the chooser to close and the dashboard to reflect an India target.
+  // Do NOT click a generic Connect button until this is true; otherwise Surfshark
+  // may connect to its unrelated "Fastest location" (the previous GB bug).
+  let indiaSelectedInUi = false;
+  let dashboardText = '';
+
+  for (let i = 0; i < 18; i += 1) {
+    await sleep(700);
+    dashboardText = await page.locator('body').innerText().catch(() => '');
+
+    const chooserStillOpen = /choose location/i.test(dashboardText) && /locations/i.test(dashboardText);
+    const indiaCard = /\bIndia\b/i.test(dashboardText) && /Mumbai|Delhi|Virtual Location|Fastest/i.test(dashboardText);
+
+    if (!chooserStillOpen && indiaCard) {
+      indiaSelectedInUi = true;
+      break;
+    }
+  }
+
+  if (!indiaSelectedInUi) {
+    throw new Error(
+      `Surfshark did not confirm India as the selected location, so Connect was not pressed. Popup text: ${dashboardText.slice(0, 1000)}`
+    );
+  }
+
+  // Often selecting Mumbai connects immediately. First give it time and verify
+  // the real browser egress IP.
+  for (let i = 0; i < 12; i += 1) {
+    await sleep(1500);
+    vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
+    if (vpn?.ok) return vpn;
+  }
+
+  // If the dashboard is explicitly set to India but still disconnected, then
+  // (and only then) press Connect.
+  dashboardText = await page.locator('body').innerText().catch(() => '');
+  const selectedIndia = /\bIndia\b/i.test(dashboardText) && /Mumbai|Delhi|Virtual Location|Fastest/i.test(dashboardText);
+  const connected = /connected\s+and\s+safe|\bpause\b/i.test(dashboardText);
+
+  if (selectedIndia && !connected) {
     const connectButton = page.getByRole('button', { name: /^connect$/i }).first();
     if (await connectButton.isVisible().catch(() => false)) {
       await connectButton.click({ force: true }).catch(() => {});
-      break;
     }
   }
 
-  // Verify the real public IP used by browser traffic. Do not trust only the UI.
-  for (let i = 0; i < 35; i += 1) {
+  // Final real-IP verification.
+  for (let i = 0; i < 30; i += 1) {
     await sleep(2000);
     vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
     if (vpn?.ok) return vpn;
   }
 
-  if (!vpn) throw new Error('India was selected, but the browser IP could not be checked.');
-  throw new Error(`Surfshark did not reach India. Current browser IP is ${vpn.ip} (${vpn.country}, ${vpn.city}).`);
+  dashboardText = await page.locator('body').innerText().catch(() => '');
+  if (!vpn) {
+    throw new Error(`India was selected, but the browser IP could not be checked. Surfshark UI: ${dashboardText.slice(0, 700)}`);
+  }
+
+  throw new Error(
+    `Surfshark selected India but browser traffic is still ${vpn.country} (${vpn.ip}, ${vpn.city}). Surfshark UI: ${dashboardText.slice(0, 700)}`
+  );
 }
 
 module.exports = {
