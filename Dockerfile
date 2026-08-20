@@ -20,4 +20,4 @@ ENV NODE_ENV=production
 
 EXPOSE 8080
 
-CMD ["xvfb-run", "-a", "node", "src/server.js"]
+CMD ["sh", "-c", "echo 'Starting app...' && xvfb-run -a node src/server.js"]
