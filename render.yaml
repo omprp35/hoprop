@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: telegram-browser-automation
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: PUBLIC_URL
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: AUTHORIZED_CHAT_IDS
+        sync: false
+      - key: TARGET_URL
+        value: https://example.com
+      - key: PROFILE_DIR
+        value: /tmp/browser-profile
+      - key: CUSTOM_EXTENSION_DIR
+        value: /app/extensions/custom
+      - key: SURFSHARK_EXTENSION_DIR
+        value: /app/extensions/surfshark
+      - key: EXPECTED_COUNTRY
+        value: IN
