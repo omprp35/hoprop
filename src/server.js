@@ -1,7 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const config = require('./config');
-const { sendMessage, sendPhoto, setupWebhook } = require('./telegram');
+const { sendMessage, sendMenu, sendPhoto, setupWebhook } = require('./telegram');
 const { runAutomation, launchBrowser } = require('./automation');
 const { checkPublicIp } = require('./vpn-check');
 const { requestLoginCode, waitForLogin, connectIndia } = require('./surfshark');
@@ -48,8 +48,18 @@ app.post('/telegram', async (req, res) => {
 
   const message = req.body?.message;
   const chatId = message?.chat?.id;
-  const text = message?.text?.trim();
-  if (!chatId || !text) return;
+  const rawText = message?.text?.trim();
+  if (!chatId || !rawText) return;
+
+  const BUTTON_COMMANDS = {
+    '🔐 Surfshark Login': '/surfshark_login',
+    '🇮🇳 Connect India': '/connect_india',
+    '🌍 VPN Status': '/surfshark_status',
+    '▶️ Run Automation': '/run',
+    '📊 Bot Status': '/status',
+    '🆔 My ID': '/id'
+  };
+  const text = BUTTON_COMMANDS[rawText] || rawText;
 
   try {
     if (!isAuthorized(chatId)) {
@@ -58,9 +68,9 @@ app.post('/telegram', async (req, res) => {
     }
 
     if (text === '/start' || text === '/help') {
-      await sendMessage(
+      await sendMenu(
         chatId,
-        'Browser automation bot ready.\n\n' +
+        'Browser automation bot ready. Use the buttons below or send a command.\n\n' +
         '/surfshark_login - get Surfshark device login code\n' +
         '/connect_india - connect Surfshark to India\n' +
         '/surfshark_status - check browser IP/country\n' +
@@ -72,12 +82,12 @@ app.post('/telegram', async (req, res) => {
     }
 
     if (text === '/id') {
-      await sendMessage(chatId, `Your chat ID: ${chatId}`);
+      await sendMenu(chatId, `Your chat ID: ${chatId}`);
       return;
     }
 
     if (text === '/status') {
-      await sendMessage(chatId, `Status: ${running ? 'running' : lastStatus}${lastRunAt ? `\nLast run: ${lastRunAt}` : ''}`);
+      await sendMenu(chatId, `Status: ${running ? 'running' : lastStatus}${lastRunAt ? `\nLast run: ${lastRunAt}` : ''}`);
       return;
     }
 
@@ -127,12 +137,12 @@ app.post('/telegram', async (req, res) => {
           throw new Error('Timed out waiting for Surfshark login approval. Send /surfshark_login to get a new code.');
         }
 
-        await sendMessage(chatId, '✅ Surfshark login completed. Now send /connect_india.');
+        await sendMenu(chatId, '✅ Surfshark login completed. Tap 🇮🇳 Connect India.');
         lastStatus = 'Surfshark logged in';
       } catch (error) {
         lastStatus = 'failed';
         console.error(error);
-        await sendMessage(chatId, `❌ Surfshark login failed\n${error.message}`);
+        await sendMenu(chatId, `❌ Surfshark login failed\n${error.message}`);
       } finally {
         if (context) await context.close().catch(() => {});
         running = false;
@@ -145,7 +155,7 @@ app.post('/telegram', async (req, res) => {
       lastStatus = 'connecting Surfshark to India';
       try {
         const vpn = await withBrowser(context => connectIndia(context));
-        await sendMessage(
+        await sendMenu(
           chatId,
           `✅ Surfshark connected to India\nIP: ${vpn.ip}\nCountry: ${vpn.country}\nCity: ${vpn.city}`
         );
@@ -153,7 +163,7 @@ app.post('/telegram', async (req, res) => {
       } catch (error) {
         lastStatus = 'failed';
         console.error(error);
-        await sendMessage(chatId, `❌ Connect India failed\n${error.message}`);
+        await sendMenu(chatId, `❌ Connect India failed\n${error.message}`);
       } finally {
         running = false;
       }

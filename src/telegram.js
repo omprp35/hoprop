@@ -2,6 +2,25 @@ const config = require('./config');
 
 const API = `https://api.telegram.org/bot${config.botToken}`;
 
+const MAIN_KEYBOARD = {
+  keyboard: [
+    [
+      { text: '🔐 Surfshark Login' },
+      { text: '🇮🇳 Connect India' }
+    ],
+    [
+      { text: '🌍 VPN Status' },
+      { text: '▶️ Run Automation' }
+    ],
+    [
+      { text: '📊 Bot Status' },
+      { text: '🆔 My ID' }
+    ]
+  ],
+  resize_keyboard: true,
+  is_persistent: true
+};
+
 async function telegram(method, payload = {}) {
   const response = await fetch(`${API}/${method}`, {
     method: 'POST',
@@ -16,12 +35,17 @@ async function telegram(method, payload = {}) {
   return data.result;
 }
 
-async function sendMessage(chatId, text) {
+async function sendMessage(chatId, text, options = {}) {
   return telegram('sendMessage', {
     chat_id: chatId,
     text,
-    disable_web_page_preview: true
+    disable_web_page_preview: true,
+    ...options
   });
+}
+
+async function sendMenu(chatId, text) {
+  return sendMessage(chatId, text, { reply_markup: MAIN_KEYBOARD });
 }
 
 async function sendPhoto(chatId, filePath, caption = '') {
@@ -53,4 +77,4 @@ async function setupWebhook() {
   console.log('Telegram webhook configured:', result, webhookUrl);
 }
 
-module.exports = { telegram, sendMessage, sendPhoto, setupWebhook };
+module.exports = { telegram, sendMessage, sendMenu, sendPhoto, setupWebhook, MAIN_KEYBOARD };

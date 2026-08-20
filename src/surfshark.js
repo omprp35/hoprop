@@ -157,117 +157,144 @@ async function waitForLogin(page, timeoutMs = 5 * 60 * 1000) {
   return false;
 }
 
+async function chooserIsOpen(page) {
+  const text = await page.locator('body').innerText().catch(() => '');
+  if (!/choose\s+location/i.test(text)) return false;
+  const search = page.locator('input[placeholder*="Search" i], input[aria-label*="Search" i], input').first();
+  return await search.isVisible().catch(() => false);
+}
+
+async function openLocationChooser(page) {
+  if (await chooserIsOpen(page)) return true;
+
+  // 1) Prefer explicit accessible controls if Surfshark exposes them.
+  const explicit = page.locator([
+    'button[aria-label*="location" i]',
+    '[role="button"][aria-label*="location" i]',
+    'button[title*="location" i]',
+    '[role="button"][title*="location" i]',
+    'button[aria-label*="server" i]',
+    '[role="button"][aria-label*="server" i]'
+  ].join(','));
+
+  const explicitCount = await explicit.count().catch(() => 0);
+  for (let i = 0; i < Math.min(explicitCount, 20); i += 1) {
+    const el = explicit.nth(i);
+    if (!(await el.isVisible().catch(() => false))) continue;
+    await el.click({ force: true, timeout: 3000 }).catch(() => {});
+    await sleep(700);
+    if (await chooserIsOpen(page)) return true;
+  }
+
+  // 2) Surfshark 5.2.x layout shown in the hosted browser:
+  // the current-location card is immediately above the Pause/Connect row and
+  // the small list icon is near the card's right edge. Anchor from the visible
+  // "Recently used" and Pause/Connect controls, then click that icon area.
+  const recent = page.getByText(/recently\s+used/i).first();
+  const recentBox = await recent.boundingBox().catch(() => null);
+  const action = page.getByRole('button', { name: /^(pause|connect)$/i }).first();
+  const actionBox = await action.boundingBox().catch(() => null);
+
+  if (recentBox && actionBox) {
+    const xCandidates = [
+      recentBox.x + recentBox.width - 45,
+      recentBox.x + recentBox.width - 70,
+      actionBox.x + actionBox.width + 35
+    ];
+    const yCandidates = [
+      actionBox.y - 55,
+      actionBox.y - 70,
+      actionBox.y - 40
+    ];
+
+    for (const y of yCandidates) {
+      for (const x of xCandidates) {
+        await page.mouse.click(x, y).catch(() => {});
+        await sleep(700);
+        if (await chooserIsOpen(page)) return true;
+      }
+    }
+  }
+
+  // 3) DOM fallback: inspect clickable elements directly above "Recently used".
+  if (recentBox) {
+    const candidates = page.locator('button, [role="button"], [tabindex="0"]');
+    const count = await candidates.count().catch(() => 0);
+    const ranked = [];
+
+    for (let i = 0; i < Math.min(count, 160); i += 1) {
+      const el = candidates.nth(i);
+      if (!(await el.isVisible().catch(() => false))) continue;
+      const box = await el.boundingBox().catch(() => null);
+      if (!box) continue;
+
+      const bottom = box.y + box.height;
+      const gap = recentBox.y - bottom;
+      const overlaps = box.x < recentBox.x + recentBox.width && box.x + box.width > recentBox.x;
+      const text = ((await el.innerText().catch(() => '')) || '').trim();
+
+      if (gap >= 0 && gap < 260 && overlaps && box.width >= 120) {
+        if (/^(pause|connect|turn on|off|on)$/i.test(text)) continue;
+        ranked.push({ el, gap, box, text });
+      }
+    }
+
+    ranked.sort((a, b) => a.gap - b.gap);
+    for (const candidate of ranked.slice(0, 12)) {
+      // Click near the right edge first because that is where Surfshark's list
+      // icon is located. Fall back to clicking the element itself.
+      await page.mouse.click(
+        candidate.box.x + candidate.box.width - 28,
+        candidate.box.y + candidate.box.height / 2
+      ).catch(() => {});
+      await sleep(600);
+      if (await chooserIsOpen(page)) return true;
+
+      await candidate.el.click({ force: true, timeout: 2500 }).catch(() => {});
+      await sleep(600);
+      if (await chooserIsOpen(page)) return true;
+    }
+  }
+
+  // 4) Older Surfshark layouts.
+  await clickByText(page, [/choose\s+location/i, /locations?/i, /all\s*locations/i]);
+  await sleep(700);
+  return chooserIsOpen(page);
+}
+
 async function connectIndia(context) {
   const { page } = await openSurfsharkPopup(context);
-  await sleep(800);
+  await sleep(900);
 
-  // If the browser is already going through India, do nothing.
+  // If the browser already exits through India, keep the current connection.
   let vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
   if (vpn?.ok) return vpn;
 
   const body = await page.locator('body').innerText().catch(() => '');
-  if (/log\s*in|sign\s*in/i.test(body) && !/connected\s+and\s+safe|disconnect|pause/i.test(body)) {
-    throw new Error('Surfshark is not logged in. Send /surfshark_login first.');
+  if (/log\s*in|sign\s*in/i.test(body) && !/connected\s+and\s+safe|pause|vpn\s+ip\s+address/i.test(body)) {
+    throw new Error('Surfshark is not logged in. Use the Surfshark Login button first.');
   }
 
-  // Surfshark 5.2.x dashboard: clicking the currently selected location card
-  // (for example "Hong Kong / Fastest location") opens "Choose location".
-  let openedChooser = false;
-  const chooserTriggers = [
-    /fastest\s+location/i,
-    /nearest\s+country/i,
-    /choose\s+location/i,
-    /recently\s+used/i
-  ];
-
-  for (const pattern of chooserTriggers) {
-    const candidates = page.locator('button, [role="button"], [tabindex="0"], div').filter({ hasText: pattern });
-    const count = await candidates.count().catch(() => 0);
-    for (let i = 0; i < Math.min(count, 20); i += 1) {
-      const el = candidates.nth(i);
-      if (!(await el.isVisible().catch(() => false))) continue;
-      const txt = (await el.innerText().catch(() => '')) || '';
-      if (txt.length > 180) continue;
-      await el.click({ timeout: 3000 }).catch(() => {});
-      await sleep(700);
-      const popupText = await page.locator('body').innerText().catch(() => '');
-      if (/choose\s+location/i.test(popupText) && /search/i.test(popupText)) {
-        openedChooser = true;
-        break;
-      }
-    }
-    if (openedChooser) break;
-  }
-
-  // Connected-state fallback (Surfshark 5.2.x): the selected-location card may
-  // show only the country name (for example "Hong Kong"), so there is no
-  // "Fastest location" text to match. Find the clickable card immediately
-  // above the "Recently used" section using its screen position.
-  if (!openedChooser) {
-    const recent = page.getByText(/recently\s+used/i).first();
-    const recentBox = await recent.boundingBox().catch(() => null);
-
-    if (recentBox) {
-      const candidates = page.locator('button, [role="button"], [tabindex="0"]');
-      const count = await candidates.count().catch(() => 0);
-      const ranked = [];
-
-      for (let i = 0; i < Math.min(count, 120); i += 1) {
-        const el = candidates.nth(i);
-        if (!(await el.isVisible().catch(() => false))) continue;
-        const box = await el.boundingBox().catch(() => null);
-        if (!box) continue;
-
-        const bottom = box.y + box.height;
-        const verticalGap = recentBox.y - bottom;
-        const horizontallyOverlaps = box.x < recentBox.x + recentBox.width &&
-          box.x + box.width > recentBox.x;
-
-        // Location card is directly above "Recently used" on the right panel.
-        if (verticalGap >= -5 && verticalGap < 220 && horizontallyOverlaps && box.width > 120) {
-          const txt = ((await el.innerText().catch(() => '')) || '').trim();
-          if (/pause|connect|power|turn\s+on/i.test(txt)) continue;
-          ranked.push({ el, gap: Math.max(0, verticalGap), txt });
-        }
-      }
-
-      ranked.sort((a, b) => a.gap - b.gap);
-      for (const candidate of ranked.slice(0, 8)) {
-        await candidate.el.click({ timeout: 3000 }).catch(() => {});
-        await sleep(700);
-        const popupText = await page.locator('body').innerText().catch(() => '');
-        if (/choose\s+location/i.test(popupText) && /search/i.test(popupText)) {
-          openedChooser = true;
-          break;
-        }
-      }
-    }
-  }
-
-  // Text fallback for other Surfshark layouts.
-  if (!openedChooser) {
-    await clickByText(page, [/locations?/i, /all\s*locations/i]);
-    await sleep(700);
-    const popupText = await page.locator('body').innerText().catch(() => '');
-    openedChooser = /choose\s+location/i.test(popupText) && /search/i.test(popupText);
-  }
-
+  const openedChooser = await openLocationChooser(page);
   if (!openedChooser) {
     const text = await page.locator('body').innerText().catch(() => '');
     throw new Error(`Could not open Surfshark location chooser. Popup text: ${text.slice(0, 700)}`);
   }
 
-  // Search exactly for India. The current Surfshark UI uses an input with
-  // placeholder "Search" in the Choose location modal.
-  const search = page.locator('input[placeholder*="Search" i], input[aria-label*="Search" i], input').filter({ visible: true }).first();
-  if (!(await search.count().catch(() => 0))) {
+  // Search for India in the chooser.
+  const search = page.locator('input[placeholder*="Search" i], input[aria-label*="Search" i], input').first();
+  if (!(await search.isVisible().catch(() => false))) {
     throw new Error('Surfshark location search box was not found.');
   }
-  await search.fill('India');
+
+  await search.fill('india');
   await sleep(900);
 
-  // Click the exact "India" result, not another occurrence of the word India
-  // elsewhere on the dashboard (the old generic matcher could select the wrong UI).
+  // Results currently look like:
+  // India / Fastest
+  // Mumbai / India – Virtual Location
+  // Delhi / India – Virtual Location
+  // Click the top exact "India" row (Fastest), never Indonesia.
   const indiaTexts = page.getByText('India', { exact: true });
   const indiaCount = await indiaTexts.count().catch(() => 0);
   let clickedIndia = false;
@@ -276,9 +303,14 @@ async function connectIndia(context) {
     const india = indiaTexts.nth(i);
     if (!(await india.isVisible().catch(() => false))) continue;
 
-    // Prefer the result inside the open chooser. Clicking the text itself works
-    // in Surfshark 5.2.x and avoids accidentally selecting Indonesia.
-    await india.click({ timeout: 5000 }).catch(() => {});
+    // Prefer the clickable row/container containing the exact India text.
+    const row = india.locator('xpath=ancestor::*[self::button or @role="button" or @tabindex="0"][1]');
+    if (await row.count().catch(() => 0)) {
+      await row.click({ force: true, timeout: 4000 }).catch(() => {});
+    } else {
+      await india.click({ force: true, timeout: 4000 }).catch(() => {});
+    }
+
     await sleep(1200);
     clickedIndia = true;
     break;
@@ -289,23 +321,22 @@ async function connectIndia(context) {
     throw new Error(`India result was not found in Surfshark location chooser. Popup text: ${text.slice(0, 700)}`);
   }
 
-  // In Surfshark 5.2.x selecting India normally begins connecting immediately.
-  // If the dashboard returns but still shows a Connect button, press it once.
-  for (let i = 0; i < 8; i += 1) {
+  // Selecting India normally starts connecting immediately. If Surfshark
+  // returns to the dashboard with a Connect button, click it once.
+  for (let i = 0; i < 10; i += 1) {
     await sleep(700);
     const text = await page.locator('body').innerText().catch(() => '');
     if (/connected\s+and\s+safe/i.test(text) && /india/i.test(text)) break;
-    if (/\bconnect\b/i.test(text) && !/connecting/i.test(text)) {
-      const connectButton = page.getByRole('button', { name: /^connect$/i }).first();
-      if (await connectButton.isVisible().catch(() => false)) {
-        await connectButton.click().catch(() => {});
-        break;
-      }
+
+    const connectButton = page.getByRole('button', { name: /^connect$/i }).first();
+    if (await connectButton.isVisible().catch(() => false)) {
+      await connectButton.click({ force: true }).catch(() => {});
+      break;
     }
   }
 
-  // Verify using actual browser traffic, not only Surfshark's UI text.
-  for (let i = 0; i < 30; i += 1) {
+  // Verify the real public IP used by browser traffic. Do not trust only the UI.
+  for (let i = 0; i < 35; i += 1) {
     await sleep(2000);
     vpn = await checkPublicIp(context, config.expectedCountry).catch(() => null);
     if (vpn?.ok) return vpn;
