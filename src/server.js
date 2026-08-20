@@ -1,10 +1,11 @@
 const express = require('express');
 const fs = require('fs');
 const config = require('./config');
-const { sendMessage, sendMenu, sendPhoto, setupWebhook } = require('./telegram');
+const { sendMessage, sendMenu, sendSessionMenu, sendPhoto, setupWebhook } = require('./telegram');
 const { runAutomation, launchBrowser } = require('./automation');
 const { checkPublicIp } = require('./vpn-check');
 const { requestLoginCode, waitForLogin, connectIndia } = require('./surfshark');
+const { ManualSession } = require('./manual-session');
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
@@ -12,6 +13,7 @@ app.use(express.json({ limit: '1mb' }));
 let running = false;
 let lastStatus = 'idle';
 let lastRunAt = null;
+const manualSession = new ManualSession();
 
 function isAuthorized(chatId) {
   return config.authorizedChatIds.size === 0 || config.authorizedChatIds.has(String(chatId));
@@ -26,11 +28,40 @@ async function withBrowser(task) {
   }
 }
 
-app.get('/', (req, res) => {
+async function sendManualScreenshot(chatId, grid = false) {
+  const shot = await manualSession.screenshot(chatId, { grid });
+  try {
+    const caption = grid
+      ? '🧭 1280×900 coordinate grid. Use /click X Y, for example /click 640 450.'
+      : `📸 Manual browser\n${shot.title || '(no title)'}\n${shot.url || ''}`;
+    await sendPhoto(chatId, shot.filePath, caption);
+  } finally {
+    if (shot.filePath && fs.existsSync(shot.filePath)) fs.unlink(shot.filePath, () => {});
+  }
+}
+
+function manualHelpText() {
+  return (
+    '🖥 Manual browser session is active.\n\n' +
+    'Use the buttons below, or these commands:\n' +
+    '/open example.com - open a public website\n' +
+    '/click X Y - click the 1280×900 viewport\n' +
+    '/type TEXT - type into the currently focused field\n' +
+    '/key Enter - press Enter (also Tab, Escape, arrows, etc.)\n' +
+    '/session_screenshot - current browser screenshot\n' +
+    '/session_grid - screenshot with coordinate grid\n' +
+    '/session_close - close the hosted browser\n\n' +
+    'Tip: tap 🦈 Open Surfshark, then use the grid/screenshot to inspect or click it manually.\n' +
+    'Do not type passwords with /type because Telegram keeps message history.'
+  );
+}
+
+app.get('/', async (req, res) => {
   res.json({
     ok: true,
     service: 'telegram-browser-automation',
     status: running ? 'running' : lastStatus,
+    manualSession: manualSession.active,
     lastRunAt
   });
 });
@@ -52,12 +83,22 @@ app.post('/telegram', async (req, res) => {
   if (!chatId || !rawText) return;
 
   const BUTTON_COMMANDS = {
+    '🖥 Manual Session': '/session_start',
     '🔐 Surfshark Login': '/surfshark_login',
     '🇮🇳 Connect India': '/connect_india',
     '🌍 VPN Status': '/surfshark_status',
     '▶️ Run Automation': '/run',
     '📊 Bot Status': '/status',
-    '🆔 My ID': '/id'
+    '🆔 My ID': '/id',
+    '🦈 Open Surfshark': '/session_surfshark',
+    '🌐 Open IP Check': '/session_ipcheck',
+    '📸 Screenshot': '/session_screenshot',
+    '🧭 Coordinate Grid': '/session_grid',
+    '⬆️ Scroll Up': '/session_scroll_up',
+    '⬇️ Scroll Down': '/session_scroll_down',
+    '🔄 Refresh': '/session_refresh',
+    '❌ Close Session': '/session_close',
+    '🏠 Main Menu': '/menu'
   };
   const text = BUTTON_COMMANDS[rawText] || rawText;
 
@@ -67,12 +108,14 @@ app.post('/telegram', async (req, res) => {
       return;
     }
 
-    if (text === '/start' || text === '/help') {
+    if (text === '/start' || text === '/help' || text === '/menu') {
       await sendMenu(
         chatId,
-        'Browser automation bot ready. Use the buttons below or send a command.\n\n' +
+        'Browser automation bot ready.\n\n' +
+        '🖥 Manual Session lets you inspect/control the hosted browser yourself.\n\n' +
+        '/session_start - start manual browser\n' +
         '/surfshark_login - get Surfshark device login code\n' +
-        '/connect_india - connect Surfshark to India\n' +
+        '/connect_india - automatic India attempt\n' +
         '/surfshark_status - check browser IP/country\n' +
         '/run - run automation\n' +
         '/status - current bot status\n' +
@@ -87,11 +130,112 @@ app.post('/telegram', async (req, res) => {
     }
 
     if (text === '/status') {
-      await sendMenu(chatId, `Status: ${running ? 'running' : lastStatus}${lastRunAt ? `\nLast run: ${lastRunAt}` : ''}`);
+      const sessionInfo = manualSession.active ? await manualSession.info() : null;
+      await sendMenu(
+        chatId,
+        `Status: ${running ? 'running' : lastStatus}` +
+        `${lastRunAt ? `\nLast run: ${lastRunAt}` : ''}` +
+        `${sessionInfo?.active ? `\nManual session: ACTIVE\nSession URL: ${sessionInfo.url || '(blank)'}` : '\nManual session: closed'}`
+      );
       return;
     }
 
-    if (['/surfshark_login', '/connect_india', '/surfshark_status', '/run'].includes(text) && running) {
+    // ---- Manual browser session commands ----
+    if (text === '/session_start') {
+      if (running) {
+        await sendMessage(chatId, 'A browser job is already running. Wait for it to finish, then start the manual session.');
+        return;
+      }
+      lastStatus = 'manual session active';
+      await sendMessage(chatId, 'Starting persistent manual Chromium session…');
+      await manualSession.start(chatId);
+      await sendSessionMenu(chatId, manualHelpText());
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text === '/session_close') {
+      await manualSession.close(chatId);
+      lastStatus = 'idle';
+      await sendMenu(chatId, '✅ Manual browser session closed.');
+      return;
+    }
+
+    if (text === '/session_surfshark') {
+      await manualSession.openSurfshark(chatId);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text === '/session_ipcheck') {
+      await manualSession.openIpCheck(chatId);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text === '/session_screenshot') {
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text === '/session_grid') {
+      await sendManualScreenshot(chatId, true);
+      return;
+    }
+
+    if (text === '/session_scroll_up') {
+      await manualSession.scroll(chatId, -650);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text === '/session_scroll_down') {
+      await manualSession.scroll(chatId, 650);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text === '/session_refresh') {
+      await manualSession.refresh(chatId);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text.startsWith('/open ')) {
+      const url = text.slice('/open '.length).trim();
+      await manualSession.goto(chatId, url);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text.startsWith('/click ')) {
+      const parts = text.slice('/click '.length).trim().split(/\s+/);
+      await manualSession.click(chatId, parts[0], parts[1]);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text.startsWith('/type ')) {
+      const value = text.slice('/type '.length);
+      await manualSession.type(chatId, value);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    if (text.startsWith('/key ')) {
+      const key = text.slice('/key '.length).trim();
+      await manualSession.press(chatId, key);
+      await sendManualScreenshot(chatId, false);
+      return;
+    }
+
+    const browserJobCommands = ['/surfshark_login', '/connect_india', '/surfshark_status', '/run'];
+    if (browserJobCommands.includes(text) && manualSession.active) {
+      await sendSessionMenu(chatId, 'A manual browser session is currently open. Close it with ❌ Close Session before running an automatic browser job.');
+      return;
+    }
+
+    if (browserJobCommands.includes(text) && running) {
       await sendMessage(chatId, 'Another browser job is already running. Wait for it to finish.');
       return;
     }
@@ -138,7 +282,7 @@ app.post('/telegram', async (req, res) => {
           throw new Error('Timed out waiting for Surfshark login approval. Send /surfshark_login to get a new code.');
         }
 
-        await sendMenu(chatId, '✅ Surfshark login completed. Tap 🇮🇳 Connect India.');
+        await sendMenu(chatId, '✅ Surfshark login completed. You can now use 🖥 Manual Session to inspect it yourself.');
         lastStatus = 'Surfshark logged in';
       } catch (error) {
         lastStatus = 'failed';
@@ -206,8 +350,17 @@ app.post('/telegram', async (req, res) => {
     }
   } catch (error) {
     console.error('Telegram handler error:', error);
-    running = false;
-    lastStatus = 'failed';
+    if (!manualSession.active) {
+      running = false;
+      lastStatus = 'failed';
+    }
+    try {
+      if (manualSession.belongsTo(chatId)) {
+        await sendSessionMenu(chatId, `❌ Manual session command failed\n${error.message}`);
+      } else {
+        await sendMenu(chatId, `❌ Command failed\n${error.message}`);
+      }
+    } catch {}
   }
 });
 

@@ -5,16 +5,45 @@ const API = `https://api.telegram.org/bot${config.botToken}`;
 const MAIN_KEYBOARD = {
   keyboard: [
     [
-      { text: '🔐 Surfshark Login' },
-      { text: '🇮🇳 Connect India' }
+      { text: '🖥 Manual Session' },
+      { text: '🔐 Surfshark Login' }
     ],
     [
-      { text: '🌍 VPN Status' },
-      { text: '▶️ Run Automation' }
+      { text: '🇮🇳 Connect India' },
+      { text: '🌍 VPN Status' }
     ],
     [
-      { text: '📊 Bot Status' },
+      { text: '▶️ Run Automation' },
+      { text: '📊 Bot Status' }
+    ],
+    [
       { text: '🆔 My ID' }
+    ]
+  ],
+  resize_keyboard: true,
+  is_persistent: true
+};
+
+const SESSION_KEYBOARD = {
+  keyboard: [
+    [
+      { text: '🦈 Open Surfshark' },
+      { text: '🌐 Open IP Check' }
+    ],
+    [
+      { text: '📸 Screenshot' },
+      { text: '🧭 Coordinate Grid' }
+    ],
+    [
+      { text: '⬆️ Scroll Up' },
+      { text: '⬇️ Scroll Down' }
+    ],
+    [
+      { text: '🔄 Refresh' },
+      { text: '❌ Close Session' }
+    ],
+    [
+      { text: '🏠 Main Menu' }
     ]
   ],
   resize_keyboard: true,
@@ -48,6 +77,10 @@ async function sendMenu(chatId, text) {
   return sendMessage(chatId, text, { reply_markup: MAIN_KEYBOARD });
 }
 
+async function sendSessionMenu(chatId, text) {
+  return sendMessage(chatId, text, { reply_markup: SESSION_KEYBOARD });
+}
+
 async function sendPhoto(chatId, filePath, caption = '') {
   const fs = require('fs');
   const form = new FormData();
@@ -77,4 +110,4 @@ async function setupWebhook() {
   console.log('Telegram webhook configured:', result, webhookUrl);
 }
 
-module.exports = { telegram, sendMessage, sendMenu, sendPhoto, setupWebhook, MAIN_KEYBOARD };
+module.exports = { telegram, sendMessage, sendMenu, sendSessionMenu, sendPhoto, setupWebhook, MAIN_KEYBOARD, SESSION_KEYBOARD };
