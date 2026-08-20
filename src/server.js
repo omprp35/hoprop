@@ -83,6 +83,7 @@ app.post('/telegram', async (req, res) => {
   if (!chatId || !rawText) return;
 
   const BUTTON_COMMANDS = {
+    '🖥 Live Desktop': '/desktop',
     '🖥 Manual Session': '/session_start',
     '🔐 Surfshark Login': '/surfshark_login',
     '🇮🇳 Connect India': '/connect_india',
@@ -112,8 +113,10 @@ app.post('/telegram', async (req, res) => {
       await sendMenu(
         chatId,
         'Browser automation bot ready.\n\n' +
-        '🖥 Manual Session lets you inspect/control the hosted browser yourself.\n\n' +
-        '/session_start - start manual browser\n' +
+        '🖥 Live Desktop gives you an RDP-like browser window through noVNC.\n' +
+        '🖥 Manual Session gives you the Telegram screenshot/click controls.\n\n' +
+        '/desktop - open RDP-like live desktop\n' +
+        '/session_start - start Telegram-controlled manual browser\n' +
         '/surfshark_login - get Surfshark device login code\n' +
         '/connect_india - automatic India attempt\n' +
         '/surfshark_status - check browser IP/country\n' +
@@ -137,6 +140,41 @@ app.post('/telegram', async (req, res) => {
         `${lastRunAt ? `\nLast run: ${lastRunAt}` : ''}` +
         `${sessionInfo?.active ? `\nManual session: ACTIVE\nSession URL: ${sessionInfo.url || '(blank)'}` : '\nManual session: closed'}`
       );
+      return;
+    }
+
+    // ---- RDP-like live desktop (noVNC) ----
+    if (text === '/desktop') {
+      if (!config.publicUrl) {
+        await sendMenu(chatId, 'PUBLIC_URL is not configured, so I cannot create the live desktop link.');
+        return;
+      }
+      if (running) {
+        await sendMessage(chatId, 'A browser job is already running. Wait for it to finish, then open the live desktop.');
+        return;
+      }
+
+      lastStatus = 'live desktop active';
+      await sendMessage(chatId, 'Starting the hosted Chromium desktop…');
+      await manualSession.start(chatId);
+
+      const desktopUrl = `${config.publicUrl}/desktop/vnc.html?autoconnect=1&resize=scale&path=desktop/websockify`;
+      const username = process.env.DESKTOP_USERNAME || 'browser';
+      await sendMessage(
+        chatId,
+        '🖥 Live browser desktop is ready.\n\n' +
+        `Username: ${username}\n` +
+        'Password: use the DESKTOP_PASSWORD value you set in Railway Variables.\n\n' +
+        'This is the SAME Chromium session/profile that has Surfshark and your custom extension loaded. ' +
+        'You can click, type, open tabs and inspect websites directly like a remote desktop.\n\n' +
+        'When finished, return to Telegram and tap ❌ Close Session.',
+        {
+          reply_markup: {
+            inline_keyboard: [[{ text: '🌐 Open Live Desktop', url: desktopUrl }]]
+          }
+        }
+      );
+      await sendSessionMenu(chatId, 'Live desktop is active. The Telegram manual controls also work on the same browser.');
       return;
     }
 

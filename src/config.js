@@ -11,7 +11,7 @@ function cleanUrl(value) {
 }
 
 const config = {
-  port: Number(process.env.PORT || 10000),
+  port: Number(process.env.APP_PORT || process.env.PORT || 10001),
   botToken: required('TELEGRAM_BOT_TOKEN'),
   publicUrl: cleanUrl(process.env.PUBLIC_URL || ''),
   webhookSecret: required('TELEGRAM_WEBHOOK_SECRET'),

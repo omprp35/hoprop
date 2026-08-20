@@ -3,7 +3,7 @@ const path = require('path');
 const { launchBrowser } = require('./automation');
 const { openSurfsharkPopup } = require('./surfshark');
 
-const DEFAULT_TIMEOUT_MINUTES = Number(process.env.MANUAL_SESSION_MINUTES || 15);
+const DEFAULT_TIMEOUT_MINUTES = Number(process.env.MANUAL_SESSION_MINUTES || 60);
 
 function isPrivateHost(hostname) {
   const host = String(hostname || '').toLowerCase();

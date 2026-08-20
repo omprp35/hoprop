@@ -5,18 +5,19 @@ const API = `https://api.telegram.org/bot${config.botToken}`;
 const MAIN_KEYBOARD = {
   keyboard: [
     [
-      { text: '🖥 Manual Session' },
-      { text: '🔐 Surfshark Login' }
+      { text: '🖥 Live Desktop' },
+      { text: '🖥 Manual Session' }
     ],
     [
-      { text: '🇮🇳 Connect India' },
-      { text: '🌍 VPN Status' }
+      { text: '🔐 Surfshark Login' },
+      { text: '🇮🇳 Connect India' }
     ],
     [
-      { text: '▶️ Run Automation' },
-      { text: '📊 Bot Status' }
+      { text: '🌍 VPN Status' },
+      { text: '▶️ Run Automation' }
     ],
     [
+      { text: '📊 Bot Status' },
       { text: '🆔 My ID' }
     ]
   ],
