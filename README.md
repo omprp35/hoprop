@@ -82,3 +82,9 @@ AUTHORIZED_CHAT_IDS=123456789
 ## Important first test
 
 Because the exact HTML of your custom extension and Netflix pages can change, test one signup while watching **Live Desktop**. If a selector fails, the bot will stop and tell you which stage failed instead of repeatedly clicking.
+
+## Surfshark virtual-location manual confirmation
+
+The automated location probe is advisory. Some public IP databases classify Surfshark virtual-India exits by their physical backend country. If the probe does not report India, the signup workflow is **paused, not cancelled**.
+
+Use **🖥 Live Desktop** to inspect the same Chromium session. If your target/IP-check site shows India, press **✅ I Verified India**. The bot then continues to the email step. This manual confirmation applies only to the current signup workflow and is kept in memory only.
