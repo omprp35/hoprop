@@ -79,7 +79,8 @@ app.post('/telegram', async (req, res) => {
     '🖥 Live Desktop': '/desktop',
     '🔄 Restart Browser': '/restart',
     '❌ Close Browser': '/close',
-    '🛑 Cancel Signup': '/cancel'
+    '🛑 Cancel Signup': '/cancel',
+    '✅ I Verified India': '/location_ok'
   };
   const text = buttonCommands[rawText] || rawText;
 
@@ -151,18 +152,60 @@ app.post('/telegram', async (req, res) => {
 
       workflowOwner = String(chatId);
       setFlow(chatId, { step: 'checking_location' });
-      await sendMessage(chatId, 'Checking the actual browser location…');
+      await sendMessage(chatId, 'Checking the browser IP with automated geolocation databases…');
 
       try {
         const context = await browser.ensure();
         const vpn = await verifyIndia(context);
         const details = vpn.results.map(r => `${r.service}: ${r.country}/${r.ip}`).join('\n');
         setFlow(chatId, { step: 'awaiting_email' });
-        await sendMessage(chatId, `✅ India verified.\n${details}\n\nSend the email address to use for signup:`);
+        await sendMenu(chatId, `✅ India verified automatically.\n${details}\n\nSend the email address to use for signup:`);
       } catch (error) {
-        clearFlow(chatId);
-        await sendMenu(chatId, `❌ ${error.message}`);
+        // Surfshark virtual India IPs can be classified by some public databases
+        // according to the physical backend rather than their virtual country.
+        // Do not destroy the workflow. Let the user inspect this SAME Chromium
+        // session through Live Desktop and explicitly confirm before continuing.
+        setFlow(chatId, {
+          step: 'awaiting_location_confirmation',
+          locationWarning: error.message
+        });
+
+        await sendMessage(
+          chatId,
+          `⚠️ Automatic location databases did not verify India.\n\n${error.message}\n\n` +
+            'If you already connected Surfshark manually, open Live Desktop and check the location in the SAME browser. ' +
+            'If the site you care about shows India, tap ✅ I Verified India to continue. The signup will stay paused until then.',
+          {
+            reply_markup: {
+              keyboard: [
+                [{ text: '🖥 Live Desktop' }, { text: '✅ I Verified India' }],
+                [{ text: '🛑 Cancel Signup' }]
+              ],
+              resize_keyboard: true,
+              is_persistent: true
+            }
+          }
+        );
       }
+      return;
+    }
+
+    if (text === '/location_ok') {
+      const flow = getFlow(chatId);
+      if (!flow || flow.step !== 'awaiting_location_confirmation') {
+        await sendMenu(chatId, 'There is no signup waiting for manual India confirmation. Tap ▶️ Start Signup first.');
+        return;
+      }
+
+      setFlow(chatId, {
+        step: 'awaiting_email',
+        manualIndiaConfirmation: true,
+        confirmedAt: Date.now()
+      });
+      await sendMenu(
+        chatId,
+        '✅ Manual India confirmation accepted for this signup session.\n\nSend the email address to use for signup:'
+      );
       return;
     }
 
