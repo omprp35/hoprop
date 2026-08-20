@@ -106,24 +106,56 @@ async function claimAndApply(browser, email) {
   const context = await browser.ensure();
   const popup = await openCustomExtensionPopup(browser);
   const pagesBefore = new Set(context.pages());
+  let success = false;
 
   try {
     await fillEmail(popup, email);
 
-    // Support either one combined button or separate Claim then Apply buttons.
-    const combined = popup.getByRole('button', { name: /claim\s*(?:&|and)?\s*apply/i });
-    if (await combined.count()) {
-      await combined.first().click();
-    } else {
+    // Your extension currently uses a combined button labelled
+    // "Apply & Claim 30 Days". Support both word orders as well as
+    // older separate Claim / Apply UIs.
+    const combinedCandidates = [
+      popup.getByRole('button', { name: /apply\s*(?:&|and)?\s*claim(?:\s*30\s*days)?/i }),
+      popup.getByRole('button', { name: /claim\s*(?:&|and)?\s*apply/i }),
+      popup.locator('button').filter({ hasText: /apply\s*(?:&|and)?\s*claim/i }),
+      popup.locator('button').filter({ hasText: /claim\s*(?:&|and)?\s*apply/i }),
+      popup.getByText(/apply\s*(?:&|and)?\s*claim\s*30\s*days/i)
+    ];
+
+    let clickedCombined = false;
+    for (const candidate of combinedCandidates) {
+      try {
+        const button = candidate.first();
+        await button.waitFor({ state: 'visible', timeout: 2500 });
+        await button.scrollIntoViewIfNeeded().catch(() => {});
+
+        // Start waiting BEFORE the click so a very fast new tab is not missed.
+        const pagePromise = context.waitForEvent('page', { timeout: 15000 }).catch(() => null);
+        await button.click({ timeout: 7000 });
+        clickedCombined = true;
+
+        const opened = await pagePromise;
+        if (opened) {
+          await opened.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+          if (/netflix\.com/i.test(opened.url())) {
+            success = true;
+            return opened;
+          }
+        }
+        break;
+      } catch {}
+    }
+
+    if (!clickedCombined) {
+      // Older extension versions may expose separate Claim and Apply controls.
       await clickFirst([
         popup.getByRole('button', { name: /^claim$/i }),
         popup.getByText(/^claim$/i)
       ]);
 
-      // Give the extension a moment to update after Claim.
       await popup.waitForTimeout(500);
 
-      const pagePromise = context.waitForEvent('page', { timeout: 12000 }).catch(() => null);
+      const pagePromise = context.waitForEvent('page', { timeout: 15000 }).catch(() => null);
       await clickFirst([
         popup.getByRole('button', { name: /^apply$/i }),
         popup.getByText(/^apply$/i)
@@ -131,21 +163,40 @@ async function claimAndApply(browser, email) {
       const opened = await pagePromise;
       if (opened) {
         await opened.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
-        return opened;
+        if (/netflix\.com/i.test(opened.url())) {
+          success = true;
+          return opened;
+        }
       }
     }
 
-    // A combined Claim/Apply button may also open a new tab.
-    const deadline = Date.now() + 15000;
+    // Some extensions open the tab without firing Playwright's page event in
+    // time, so also inspect every newly-created page for up to 20 seconds.
+    const deadline = Date.now() + 20000;
     while (Date.now() < deadline) {
-      const netflixPage = context.pages().find(p => !pagesBefore.has(p) && /netflix\.com/i.test(p.url()));
-      if (netflixPage) return netflixPage;
-      await popup.waitForTimeout(500);
+      const netflixPage = context.pages().find(
+        p => !pagesBefore.has(p) && /netflix\.com/i.test(p.url())
+      );
+      if (netflixPage) {
+        await netflixPage.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
+        success = true;
+        return netflixPage;
+      }
+      await popup.waitForTimeout(400);
     }
 
-    throw new Error('The extension action completed, but no Netflix tab opened.');
+    throw new Error(
+      'Clicked the extension action, but no Netflix tab opened within 20 seconds. ' +
+      'The extension tab has been left open so you can inspect it in Live Desktop.'
+    );
+  } catch (error) {
+    // Keep the extension page open on failure. This makes debugging through
+    // Live Desktop possible instead of hiding the failed UI immediately.
+    throw error;
   } finally {
-    await popup.close().catch(() => {});
+    if (success) {
+      await popup.close().catch(() => {});
+    }
   }
 }
 
